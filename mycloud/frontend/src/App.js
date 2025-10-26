@@ -1,25 +1,21 @@
+// frontend/src/App.js
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import './styles.css'; // импорт стилей
 import Cookies from 'js-cookie';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
 
-
-const api = axios.create({
-  baseURL: '/api',
-  withCredentials: true, // для сессий и cookie
-});
-
-function setCSRFCookieHeader() {
-  const token = Cookies.get('csrftoken');
-  if (token) api.defaults.headers.common['X-CSRFToken'] = token;
-}
+import api, { setCSRFCookieHeader } from './api/axios'; // единый axios инстанс
+import AdminPanel from './components/AdminPanel';
+import CloudExplorer from './components/CloudExplorer';
 
 /* Инициализация CSRF: запрос, который установит csrftoken cookie в браузере */
 async function initCsrf() {
   try {
-    await api.get('/users/csrf/');
+    await api.get('/users/csrf/'); // view ensure_csrf_cookie
     setCSRFCookieHeader();
   } catch (e) {
+    // non-fatal — логируем в консоль для отладки
+    // console.warn('initCsrf failed', e);
   }
 }
 
@@ -31,7 +27,8 @@ function Nav({ user, onLogout }) {
       <Link to="/" style={{ marginRight: 10 }}>Home</Link>
       {!user && <Link to="/register" style={{ marginRight: 10 }}>Register</Link>}
       {!user && <Link to="/login" style={{ marginRight: 10 }}>Login</Link>}
-      {user && <Link to="/dashboard" style={{ marginRight: 10 }}>Dashboard</Link>}
+      {user && <Link to="/dashboard" style={{ marginRight: 10 }}>Cloud</Link>}
+      {user && <Link to="/admin" style={{ marginRight: 10 }}>Admin</Link>}
       {user && (
         <button style={{ marginLeft: 10 }} onClick={onLogout}>
           Logout
@@ -47,7 +44,7 @@ function Home() {
   return (
     <div style={{ padding: 18 }}>
       <h2>My Cloud — Demo Frontend</h2>
-      <p>Используйте навигацию для регистрации, входа и загрузки файлов.</p>
+      <p>Используйте навигацию для регистрации, входа и управления файлами.</p>
     </div>
   );
 }
@@ -67,7 +64,6 @@ function Register() {
     };
     try {
       await initCsrf();
-      setCSRFCookieHeader();
       const resp = await api.post('/users/register/', payload);
       setStatus({ ok: true, data: resp.data });
     } catch (err) {
@@ -100,7 +96,6 @@ function Login({ onLogin }) {
     e.preventDefault();
     try {
       await initCsrf();
-      setCSRFCookieHeader();
       const payload = {
         username: e.target.username.value,
         password: e.target.password.value,
@@ -127,45 +122,8 @@ function Login({ onLogin }) {
   );
 }
 
-/* FileUpload component */
-function FileUpload({ onUploaded }) {
-  const [file, setFile] = useState(null);
-  const [comment, setComment] = useState('');
-  const [status, setStatus] = useState(null);
-
-  const submit = async (e) => {
-    e && e.preventDefault();
-    if (!file) return setStatus({ ok: false, error: 'No file selected' });
-    try {
-      await initCsrf();
-      setCSRFCookieHeader();
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('comment', comment || '');
-      const resp = await api.post('/storage/files/upload/', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      setStatus({ ok: true, data: resp.data });
-      onUploaded && onUploaded(resp.data);
-    } catch (err) {
-      setStatus({ ok: false, error: err.response?.data || err.message });
-    }
-  };
-
-  return (
-    <div style={{ padding: 12 }}>
-      <form onSubmit={submit}>
-        <input type="file" onChange={(e) => setFile(e.target.files[0])} />
-        <input placeholder="comment" value={comment} onChange={(e) => setComment(e.target.value)} />
-        <button type="submit">Upload</button>
-      </form>
-      <pre>{status ? JSON.stringify(status, null, 2) : ''}</pre>
-    </div>
-  );
-}
-
-/* Dashboard */
-function Dashboard() {
+/* A tiny legacy dashboard (kept for quick checks) */
+function LegacyDashboard() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -199,9 +157,10 @@ function Dashboard() {
 
   return (
     <div style={{ padding: 18 }}>
-      <h3>Dashboard</h3>
-      <FileUpload onUploaded={onUploaded} />
-      <button onClick={loadFiles} disabled={loading} style={{ marginTop: 8 }}>Reload</button>
+      <h3>Legacy Dashboard</h3>
+      <div style={{ marginBottom: 12 }}>
+        <button onClick={loadFiles} disabled={loading}>Reload</button>
+      </div>
       <div style={{ marginTop: 12 }}>{msg}</div>
       <ul style={{ marginTop: 12 }}>
         {files.map(f => (
@@ -209,7 +168,6 @@ function Dashboard() {
             <a href={f.download_url} target="_blank" rel="noreferrer">{f.original_name}</a>
             {' '}({f.size || '—'} bytes){' '}
             <button onClick={() => makePublic(f.id)} style={{ marginLeft: 8 }}>Make public</button>
-            {f.public_link_token ? <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>token: {f.public_link_token}</div> : null}
           </li>
         ))}
       </ul>
@@ -224,13 +182,12 @@ export default function App() {
 
   // init CSRF early
   useEffect(() => {
-    initCsrf().then(setCSRFCookieHeader);
+    initCsrf();
   }, []);
 
   const logout = async () => {
     try {
       await initCsrf();
-      setCSRFCookieHeader();
       await api.post('/users/logout/');
     } catch (e) {
       // ignore
@@ -247,7 +204,15 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login onLogin={setUser} />} />
-        <Route path="/dashboard" element={<Dashboard />} />
+
+        {/* Main file manager */}
+        <Route path="/dashboard" element={<CloudExplorer />} />
+
+        {/* Legacy simple dashboard kept for quick checks */}
+        <Route path="/legacy" element={<LegacyDashboard />} />
+
+        {/* Admin panel */}
+        <Route path="/admin" element={<AdminPanel />} />
       </Routes>
     </div>
   );

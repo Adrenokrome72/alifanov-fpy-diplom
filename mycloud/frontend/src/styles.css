@@ -1,0 +1,178 @@
+:root{
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-2: #0ea5a4;
+  --danger: #ef4444;
+  --border: #e6e9ef;
+  --glass: rgba(255,255,255,0.6);
+  --radius: 10px;
+  --shadow: 0 6px 18px rgba(22, 28, 37, 0.06);
+  --mono: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+*{box-sizing: border-box}
+html,body,#root{height:100%}
+body{
+  margin:0;
+  font-family: var(--mono);
+  background: linear-gradient(180deg,#f8fafc 0%,var(--bg) 100%);
+  color:#111827;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  font-size:14px;
+  line-height:1.4;
+}
+
+/* Layout */
+.app-shell{
+  display:flex;
+  height:100vh;
+  gap:20px;
+  padding:20px;
+}
+
+/* Sidebar */
+.sidebar{
+  width:280px;
+  min-width:260px;
+  background:var(--card);
+  border-radius:var(--radius);
+  padding:14px;
+  box-shadow:var(--shadow);
+  border:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.logo{
+  width:42px;height:42px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  display:flex;align-items:center;justify-content:center;color:white;font-weight:700;
+  font-size:18px;
+}
+.brand h1{font-size:16px;margin:0}
+.nav{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.nav a{display:flex;gap:10px;align-items:center;padding:8px;border-radius:8px;color:#0f172a;text-decoration:none}
+.nav a:hover{background:rgba(37,99,235,0.06);color:var(--accent)}
+
+/* Main */
+.main{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+.header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.header .controls{display:flex;gap:8px;align-items:center}
+
+.card{
+  background:var(--card);
+  border-radius:var(--radius);
+  padding:14px;
+  box-shadow:var(--shadow);
+  border:1px solid var(--border);
+}
+
+/* Admin table */
+.table{
+  width:100%;border-collapse:collapse;font-size:13px;
+}
+.table th, .table td{padding:10px;text-align:left;border-bottom:1px solid #f1f3f7}
+.table th{color:var(--muted);font-weight:600;font-size:12px;letter-spacing:0.02em}
+.small{font-size:13px;color:var(--muted)}
+
+/* Buttons */
+.btn{
+  display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;
+  box-shadow:0 6px 12px rgba(37,99,235,0.08);
+}
+.btn.ghost{background:transparent;color:var(--accent);box-shadow:none;border:1px solid var(--border)}
+.btn.danger{background:var(--danger);box-shadow:none}
+
+/* Small controls */
+.row{display:flex;gap:10px;align-items:center}
+.input, .select{
+  padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;
+}
+.search{flex:1}
+
+/* File manager layout */
+.fm{
+  display:flex;gap:18px;
+}
+.tree{
+  width:260px;min-width:220px;
+  display:flex;flex-direction:column;gap:8px;
+}
+.tree .folder{
+  display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;cursor:pointer;
+}
+.tree .folder:hover{background:rgba(2,6,23,0.03)}
+.tree .folder.active{background:linear-gradient(90deg, rgba(37,99,235,0.06), rgba(14,165,164,0.03));border:1px solid rgba(37,99,235,0.08)}
+
+/* Files grid */
+.files{
+  flex:1;display:flex;flex-direction:column;gap:12px;
+}
+.files .toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.files-grid{
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap:12px;
+}
+
+/* File card */
+.file-card{
+  border-radius:10px;padding:10px;border:1px dashed transparent;background:linear-gradient(180deg,#fff,var(--glass));
+  display:flex;flex-direction:column;gap:8px;align-items:flex-start;min-height:120px;
+}
+.file-card.dragging{opacity:0.6;border-style:solid;border-color:rgba(37,99,235,0.18)}
+.file-thumb{
+  width:100%;height:110px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.file-thumb img{width:100%;height:100%;object-fit:cover}
+.file-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%}
+.file-meta{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center}
+
+/* Folder controls */
+.folder-actions{display:flex;gap:8px}
+.folder-new{padding:8px;border-radius:8px;border:1px dashed var(--border);background:transparent;cursor:pointer}
+
+/* Drop area */
+.drop-area{
+  border:2px dashed transparent;border-radius:12px;padding:10px;
+  transition:all .15s ease;
+}
+.drop-area.dragover{border-color:rgba(37,99,235,0.2);background:linear-gradient(180deg, rgba(37,99,235,0.03), transparent)}
+
+/* Modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,0.4);display:flex;align-items:center;justify-content:center}
+.modal{width:480px;background:var(--card);border-radius:12px;padding:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
+
+/* tiny preview */
+.file-preview{
+  display:flex;gap:12px;align-items:flex-start;
+}
+.preview-img{width:140px;height:120px;border-radius:8px;background:#f3f4f6;overflow:hidden}
+.preview-meta{flex:1}
+
+/* breadcrumbs */
+.breadcrumbs{font-size:13px;color:var(--muted);display:flex;gap:8px;align-items:center}
+
+/* footer small */
+.small-muted{font-size:12px;color:var(--muted)}
+
+/* modal small */
+.modal .btn { padding:8px 12px; }

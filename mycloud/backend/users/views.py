@@ -1,42 +1,45 @@
 # backend/users/views.py
-from rest_framework import generics, status, permissions, viewsets
-from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.permissions import IsAdminUser
-from django.contrib.auth import login, logout
-from django.http import JsonResponse
 from django.contrib.auth import get_user_model
-from django.views.decorators.csrf import ensure_csrf_cookie
-from .serializers import RegisterSerializer, LoginSerializer
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from .serializers import UserListSerializer
 
 User = get_user_model()
 
-class RegisterView(generics.CreateAPIView):
-    serializer_class = RegisterSerializer
-    permission_classes = [permissions.AllowAny]
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """
+    Позволяет доступ только админам для модификаций; read-only для других аутентифицированных (если нужно).
+    """
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        return request.user and request.user.is_staff
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = RegisterSerializer
-    permission_classes = [IsAdminUser]
+    """
+    ReadOnly модель: list/retrieve доступна только админам (настройка через permission_classes ниже),
+    а также добавлена custom action toggle_block (POST).
+    """
+    queryset = User.objects.all().order_by('username')
+    serializer_class = UserListSerializer
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
 
-@api_view(['POST'])
-@permission_classes([permissions.AllowAny])
-def login_view(request):
-    serializer = LoginSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    user = serializer.validated_data['user']
-    login(request, user)
-    return Response({"detail":"Logged in"}, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, permissions.IsAdminUser])
+    def toggle_block(self, request, pk=None):
+        """
+        Toggle block status for the user.
+        Uses User.is_active inverted view: is_blocked = not is_active.
+        """
+        try:
+            user = self.get_object()
+        except Exception:
+            return Response({'detail': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-@api_view(['POST'])
-def logout_view(request):
-    logout(request)
-    return Response({"detail":"Logged out"}, status=status.HTTP_200_OK)
+        # prevent admin from toggling himself (optional)
+        if user.pk == request.user.pk:
+            return Response({'detail': "Can't toggle yourself"}, status=status.HTTP_400_BAD_REQUEST)
 
-@ensure_csrf_cookie
-@api_view(['GET'])
-@permission_classes([permissions.AllowAny])
-def get_csrf(request):
-    """Возвращает csrf cookie (только для dev)"""
-    return JsonResponse({'detail': 'CSRF cookie set'})
+        user.is_active = not bool(user.is_active)
+        user.save(update_fields=['is_active'])
+        return Response({'id': user.pk, 'is_blocked': not user.is_active})

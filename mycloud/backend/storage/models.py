@@ -1,55 +1,61 @@
 # backend/storage/models.py
-import os
-import uuid
-import secrets
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+import uuid
+import os
 
-User = settings.AUTH_USER_MODEL  # обычно "auth.User"
+def storage_file_path(instance, filename):
+    # store in MEDIA_ROOT/files/<user_id>/<uuid4>_<original>
+    uid = getattr(instance.owner, 'id', 'anon')
+    name = f"{uuid.uuid4().hex}_{filename}"
+    return os.path.join('files', str(uid), name)
 
-def user_directory_path(instance, filename):
-    # сохраняем под: files/<user_id>/<yyyymm>/<uuid>.<ext>
-    ext = filename.split('.')[-1] if '.' in filename else ''
-    ymd = timezone.now().strftime('%Y%m')
-    unique = uuid.uuid4().hex
-    stored_filename = f"{unique}.{ext}" if ext else unique
-    return os.path.join('files', str(instance.owner.id), ymd, stored_filename)
-
-def make_public_token():
-    return secrets.token_urlsafe(24)
-
-class StoredFile(models.Model):
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stored_files')
-    original_name = models.CharField(max_length=512)
-    stored_file = models.FileField(upload_to=user_directory_path)
-    size = models.BigIntegerField(null=True, blank=True)
-    uploaded_at = models.DateTimeField(auto_now_add=True)
-    last_downloaded_at = models.DateTimeField(null=True, blank=True)
-    comment = models.TextField(blank=True)
-    public_link_token = models.CharField(max_length=128, unique=True, null=True, blank=True)
+class Folder(models.Model):
+    name = models.CharField(max_length=255)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='children')
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name='folders')
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-uploaded_at']
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+class StoredFile(models.Model):
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='stored_files')
+    original_name = models.CharField(max_length=1024)
+    stored_file = models.FileField(upload_to=storage_file_path)
+    size = models.BigIntegerField(null=True, blank=True)
+    comment = models.TextField(blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    last_downloaded_at = models.DateTimeField(null=True, blank=True)
+    folder = models.ForeignKey(Folder, null=True, blank=True, on_delete=models.SET_NULL, related_name='files')
+    public_link_token = models.CharField(max_length=64, blank=True, null=True)
 
     def save(self, *args, **kwargs):
-        # если файл загружен — обновим size
-        if self.stored_file and not self.size:
-            try:
+        # try to set size automatically
+        try:
+            if self.stored_file and not self.size:
                 self.size = self.stored_file.size
-            except Exception:
-                pass
-        # сгенерим токен, если требуется
-        if self.public_link_token is None:
-            self.public_link_token = None  # оставляем None — генерируем по запросу
+        except Exception:
+            pass
         super().save(*args, **kwargs)
 
     def generate_public_link(self):
         if not self.public_link_token:
-            self.public_link_token = make_public_token()
+            self.public_link_token = uuid.uuid4().hex
             self.save(update_fields=['public_link_token'])
         return self.public_link_token
 
     def increment_download(self):
         self.last_downloaded_at = timezone.now()
         self.save(update_fields=['last_downloaded_at'])
+
+    def get_download_url(self):
+        # this returns the API path; serializer will turn it into absolute
+        return f"/api/storage/files/{self.pk}/download/"
+
+    def __str__(self):
+        return f"{self.original_name} ({self.owner})"

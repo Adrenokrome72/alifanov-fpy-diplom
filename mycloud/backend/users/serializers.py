@@ -1,48 +1,35 @@
 # backend/users/serializers.py
-import re
-from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from django.db.models import Sum
 
 User = get_user_model()
 
-USERNAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9]{3,19}$')
-PASSWORD_RE = re.compile(r'^(?=.{6,}$)(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$')
-
-class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
+class UserListSerializer(serializers.ModelSerializer):
+    # computed fields
+    is_blocked = serializers.SerializerMethodField()
+    storage_count = serializers.SerializerMethodField()
+    storage_bytes = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('username', 'password', 'email', 'first_name', 'last_name')
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_staff',
+                  'is_blocked', 'storage_count', 'storage_bytes']
 
-    def validate_username(self, value):
-        if not USERNAME_RE.match(value):
-            raise serializers.ValidationError("Логин: латинские буквы/цифры, первая буква, длина 4-20.")
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Пользователь с таким логином уже существует.")
-        return value
+    def get_is_blocked(self, obj):
+        # Using is_active inverted as "blocked" flag
+        return not bool(getattr(obj, 'is_active', True))
 
-    def validate_password(self, value):
-        if not PASSWORD_RE.match(value):
-            raise serializers.ValidationError(
-                "Пароль: минимум 6 символов, как минимум одна заглавная буква, одна цифра и один специальный символ."
-            )
-        return value
+    def get_storage_count(self, obj):
+        try:
+            # ожидается related_name='stored_files' в модели StoredFile
+            return obj.stored_files.count()
+        except Exception:
+            return None
 
-    def create(self, validated_data):
-        password = validated_data.pop('password')
-        user = User(**validated_data)
-        user.set_password(password)
-        user.save()
-        return user
-
-class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField()
-    password = serializers.CharField(write_only=True)
-
-    def validate(self, attrs):
-        user = authenticate(username=attrs['username'], password=attrs['password'])
-        if not user:
-            raise serializers.ValidationError("Неверные логин или пароль.")
-        attrs['user'] = user
-        return attrs
+    def get_storage_bytes(self, obj):
+        try:
+            agg = obj.stored_files.aggregate(total=Sum('size'))
+            return agg.get('total') or 0
+        except Exception:
+            return None
