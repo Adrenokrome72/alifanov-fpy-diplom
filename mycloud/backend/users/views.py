@@ -1,45 +1,74 @@
-# backend/users/views.py
-from django.contrib.auth import get_user_model
+# users/views.py
+from django.contrib.auth import authenticate, login as django_login, logout as django_logout, get_user_model
 from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from .serializers import UserListSerializer
+from rest_framework.permissions import IsAdminUser
+from django.shortcuts import get_object_or_404
+
+from .serializers import RegisterSerializer, LoginSerializer, AdminUserSerializer
 
 User = get_user_model()
 
-class IsAdminOrReadOnly(permissions.BasePermission):
-    """
-    Позволяет доступ только админам для модификаций; read-only для других аутентифицированных (если нужно).
-    """
-    def has_permission(self, request, view):
-        if request.method in permissions.SAFE_METHODS:
-            return request.user and request.user.is_authenticated
-        return request.user and request.user.is_staff
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def csrf(request):
+    # hits CSRF middleware and sets cookie
+    return Response({"detail": "csrf ok"})
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def register(request):
+    serializer = RegisterSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    user = serializer.save()
+    return Response({"id": user.id, "username": user.username}, status=status.HTTP_201_CREATED)
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def login(request):
+    ser = LoginSerializer(data=request.data)
+    if not ser.is_valid():
+        return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+    username = ser.validated_data['username']
+    password = ser.validated_data['password']
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        return Response({"detail": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+    # check blocked via profile (create if missing)
+    prof = getattr(user, 'profile', None)
+    blocked = False
+    if prof is None:
+        # lazy create profile if absent
+        from .models import Profile
+        prof, _ = Profile.objects.get_or_create(user=user)
+    blocked = prof.is_blocked
+    if blocked:
+        return Response({"detail": "User blocked"}, status=status.HTTP_403_FORBIDDEN)
+    django_login(request, user)
+    return Response({"id": user.id, "username": user.username})
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def logout(request):
+    django_logout(request)
+    return Response({"detail": "logged out"})
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    ReadOnly модель: list/retrieve доступна только админам (настройка через permission_classes ниже),
-    а также добавлена custom action toggle_block (POST).
-    """
-    queryset = User.objects.all().order_by('username')
-    serializer_class = UserListSerializer
-    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    queryset = User.objects.all().order_by('id')
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, permissions.IsAdminUser])
-    def toggle_block(self, request, pk=None):
-        """
-        Toggle block status for the user.
-        Uses User.is_active inverted view: is_blocked = not is_active.
-        """
-        try:
-            user = self.get_object()
-        except Exception:
-            return Response({'detail': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # prevent admin from toggling himself (optional)
-        if user.pk == request.user.pk:
-            return Response({'detail': "Can't toggle yourself"}, status=status.HTTP_400_BAD_REQUEST)
-
-        user.is_active = not bool(user.is_active)
-        user.save(update_fields=['is_active'])
-        return Response({'id': user.pk, 'is_blocked': not user.is_active})
+@api_view(['POST'])
+@permission_classes([permissions.IsAdminUser])
+def toggle_block(request, pk):
+    user = get_object_or_404(User, pk=pk)
+    # make sure profile exists
+    prof = getattr(user, 'profile', None)
+    if prof is None:
+        from .models import Profile
+        prof, _ = Profile.objects.get_or_create(user=user)
+    prof.is_blocked = not prof.is_blocked
+    prof.save(update_fields=['is_blocked'])
+    return Response({"id": user.id, "is_blocked": prof.is_blocked})

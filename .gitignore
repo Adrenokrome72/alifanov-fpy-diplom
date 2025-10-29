@@ -55,3 +55,6 @@ coverage/
 
 cookiejar
 docker-compose.yml
+playwright-report
+test-results
+project.txt
