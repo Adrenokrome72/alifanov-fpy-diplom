@@ -3,8 +3,8 @@ import axios from 'axios';
 import Cookies from 'js-cookie';
 
 const api = axios.create({
-  baseURL: '/api',      // относительный путь — будет работать через CRA proxy (localhost:3000 -> backend)
-  withCredentials: true // обязательно — чтобы браузер отправлял cookie (sessionid, csrftoken)
+  baseURL: process.env.REACT_APP_API_BASE || '/api', // <- относительный путь, работает через CRA proxy
+  withCredentials: true
 });
 
 /**
