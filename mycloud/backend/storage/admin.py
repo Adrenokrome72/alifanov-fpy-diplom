@@ -1,10 +1,14 @@
 from django.contrib import admin
-from .models import StoredFile, Folder
+from .models import Folder, File
 
 @admin.register(Folder)
 class FolderAdmin(admin.ModelAdmin):
-    list_display = ('id','name','owner','parent','created_at')
+    list_display = ('name', 'owner', 'parent', 'created_at', 'child_count')
+    list_filter = ('owner',)
+    search_fields = ('name',)
 
-@admin.register(StoredFile)
-class StoredFileAdmin(admin.ModelAdmin):
-    list_display = ('id','original_name','owner','size','uploaded_at','folder')
+@admin.register(File)
+class FileAdmin(admin.ModelAdmin):
+    list_display = ('original_name', 'owner', 'folder', 'size', 'uploaded_at', 'last_downloaded_at')
+    list_filter = ('owner', 'folder')
+    search_fields = ('original_name',)

@@ -1,273 +1,200 @@
-# backend/storage/views.py
-import os
-from django.shortcuts import get_object_or_404
-from django.http import FileResponse, Http404
-from django.conf import settings
-
-from rest_framework import status, permissions
-from rest_framework.decorators import api_view, permission_classes, parser_classes
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
+from .models import Folder, File
+from django.contrib.auth import get_user_model
+from django.http import FileResponse
+from django.conf import settings
+from rest_framework.permissions import IsAuthenticated
+from django.shortcuts import get_object_or_404
+from .serializers import FolderSerializer
+from logging import getLogger
+import os
+import uuid
+from django.utils import timezone
 
-from .models import StoredFile, Folder
-from .serializers import StoredFileSerializer, FolderSerializer
+logger = getLogger(__name__)
 
+User = get_user_model()
 
-class IsOwnerOrAdmin(permissions.BasePermission):
-    """Object-level permission: owner or staff only."""
-    def has_object_permission(self, request, view, obj):
-        if request.user and request.user.is_staff:
-            return True
-        return getattr(obj, 'owner', None) == request.user
+class FolderCreateView(APIView):
+    permission_classes = [IsAuthenticated]
 
+    def post(self, request):
+        print('Folder create request:', request.data)
+        serializer = FolderSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(owner=request.user)
+            return Response(serializer.data, status=201)
+        print('Serializer errors:', serializer.errors)
+        return Response(serializer.errors, status=400)
 
-# ---------- Folders ----------
+class FolderListView(APIView):
+    permission_classes = [IsAuthenticated]
 
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def list_folders(request):
-    """GET /api/storage/folders/"""
-    if request.user.is_staff and 'user_id' in request.query_params:
-        uid = request.query_params.get('user_id')
-        folders = Folder.objects.filter(owner__id=uid)
-    else:
+    def get(self, request):
         folders = Folder.objects.filter(owner=request.user)
-    serializer = FolderSerializer(folders, many=True)
-    return Response(serializer.data)
+        return Response([{'id': f.id, 'name': f.name, 'parent': f.parent_id if f.parent else None, 'child_count': f.child_count} for f in folders])
 
+class FolderRenameView(APIView):
+    permission_classes = [IsAuthenticated]
 
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def create_folder(request):
-    """POST /api/storage/folders/create/  {name, parent}"""
-    name = request.data.get('name')
-    parent_id = request.data.get('parent', None)
-    if not name:
-        return Response({"detail": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+    def post(self, request, pk):
+        folder = get_object_or_404(Folder, pk=pk, owner=request.user)
+        folder.name = request.data.get('name', folder.name)
+        folder.save()
+        logger.info(f"Folder renamed: {folder.name} by {request.user}")
+        return Response({'detail': 'Renamed'})
 
-    parent = None
-    if parent_id not in (None, '', 'null'):
-        try:
-            parent = get_object_or_404(Folder, pk=int(parent_id))
-        except ValueError:
-            return Response({"detail": "invalid parent id"}, status=status.HTTP_400_BAD_REQUEST)
-        # ownership check
-        if not (request.user.is_staff or parent.owner == request.user):
-            return Response(status=status.HTTP_403_FORBIDDEN)
+class FolderDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    folder = Folder.objects.create(name=name, owner=request.user, parent=parent)
-    return Response(FolderSerializer(folder).data, status=status.HTTP_201_CREATED)
+    def delete(self, request, pk):
+        folder = get_object_or_404(Folder, pk=pk, owner=request.user)
+        # Рекурсивное удаление (Django CASCADE сделает, но обновим parent)
+        if folder.parent:
+            folder.parent.update_child_count()
+        folder.delete()
+        logger.info(f"Folder deleted: {pk} by {request.user}")
+        return Response({'detail': 'Deleted'})
 
+class FolderMoveView(APIView):
+    permission_classes = [IsAuthenticated]
 
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def rename_folder(request, pk):
-    """POST /api/storage/folders/<pk>/rename/  {name}"""
-    folder = get_object_or_404(Folder, pk=pk)
-    if not (request.user.is_staff or folder.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    name = request.data.get('name')
-    if not name:
-        return Response({"detail": "name required"}, status=status.HTTP_400_BAD_REQUEST)
-    folder.name = name
-    folder.save(update_fields=['name'])
-    return Response(FolderSerializer(folder).data)
+    def post(self, request, pk):
+        folder = get_object_or_404(Folder, pk=pk, owner=request.user)
+        target_id = request.data.get('target_folder')
+        target = Folder.objects.get(pk=target_id) if target_id else None
+        if folder.parent:
+            folder.parent.update_child_count()
+        folder.parent = target
+        folder.save()
+        if target:
+            target.update_child_count()
+        logger.info(f"Folder moved: {folder.name} by {request.user}")
+        return Response({'detail': 'Moved'})
 
+class FileUploadView(APIView):
+    permission_classes = [IsAuthenticated]
 
-@api_view(['DELETE'])
-@permission_classes([permissions.IsAuthenticated])
-def delete_folder(request, pk):
-    """DELETE /api/storage/folders/<pk>/"""
-    folder = get_object_or_404(Folder, pk=pk)
-    if not (request.user.is_staff or folder.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    folder.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
+    def post(self, request):
+        if not request.user.can_upload:
+            logger.warning(f"No upload permission for {request.user}")
+            return Response({'detail': 'No upload permission'}, status=status.HTTP_403_FORBIDDEN)
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'detail': 'No file'}, status=status.HTTP_400_BAD_REQUEST)
+        if request.user.used_storage + file.size > request.user.storage_limit:
+            logger.warning(f"Storage limit exceeded for {request.user}")
+            return Response({'detail': 'Storage limit exceeded'}, status=status.HTTP_400_BAD_REQUEST)
+        folder_id = request.data.get('folder')
+        folder = Folder.objects.get(pk=folder_id) if folder_id else None
+        f = File.objects.create(
+            original_name=file.name,
+            size=file.size,
+            comment=request.data.get('comment', ''),
+            owner=request.user,
+            folder=folder
+        )
+        path = os.path.join(settings.MEDIA_ROOT, str(request.user.id), f.unique_name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb+') as dest:
+            for chunk in file.chunks():
+                dest.write(chunk)
+        # Thumbnail if image
+        if f.original_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+            f.thumbnail = path  # ImageKit обработает
+            f.save()
+        if folder:
+            folder.update_child_count()
+        logger.info(f"File uploaded: {f.original_name} by {request.user}")
+        return Response({'id': f.id, 'name': f.original_name, 'download_url': f'{settings.MEDIA_URL}{f.unique_name}'}, status=status.HTTP_201_CREATED)
 
+class FileListView(APIView):
+    permission_classes = [IsAuthenticated]
 
-# ---------- Files ----------
+    def get(self, request):
+        if not request.user.can_view:
+            return Response({'detail': 'No view permission'}, status=status.HTTP_403_FORBIDDEN)
+        folder_id = request.query_params.get('folder_id')
+        order_by = request.query_params.get('order_by', 'uploaded_at')  # name, size, -uploaded_at для desc
+        files = File.objects.filter(owner=request.user, folder_id=folder_id).order_by(order_by)
+        return Response([{
+            'id': f.id, 'name': f.original_name, 'size': f.size, 'comment': f.comment,
+            'uploaded_at': f.uploaded_at, 'last_downloaded_at': f.last_downloaded_at,
+            'share_link': str(f.share_link), 'has_share': True, 'thumbnail': f.thumbnail.url if f.thumbnail else None
+        } for f in files])
 
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def list_files(request):
-    """
-    GET /api/storage/files/?folder_id=...  (or without folder -> all user's files)
-    Admins can pass user_id to view other user's files.
-    """
-    user = request.user
-    if user.is_staff and 'user_id' in request.query_params:
-        uid = request.query_params.get('user_id')
-        files = StoredFile.objects.filter(owner__id=uid)
-    else:
-        folder_id = request.query_params.get('folder_id', None)
-        if folder_id in (None, '', 'null'):
-            files = StoredFile.objects.filter(owner=user)
-        else:
-            try:
-                files = StoredFile.objects.filter(owner=user, folder__id=int(folder_id))
-            except ValueError:
-                return Response({"detail": "invalid folder_id"}, status=status.HTTP_400_BAD_REQUEST)
+class FileDownloadView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    serializer = StoredFileSerializer(files, many=True, context={'request': request})
-    return Response(serializer.data)
+    def get(self, request, pk):
+        if not request.user.can_download:
+            return Response({'detail': 'No download permission'}, status=status.HTTP_403_FORBIDDEN)
+        f = get_object_or_404(File, pk=pk, owner=request.user)
+        f.last_downloaded_at = timezone.now()
+        f.save()
+        path = os.path.join(settings.MEDIA_ROOT, str(request.user.id), f.unique_name)
+        if not os.path.exists(path):
+            logger.error(f"File not found on disk: {path}")
+            return Response({'detail': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(open(path, 'rb'), as_attachment=True, filename=f.original_name)
 
+class FileShareDownloadView(APIView):
+    # Без permission_classes - доступно всем
+    def get(self, request, share_link):
+        f = get_object_or_404(File, share_link=share_link)
+        if not f.owner.can_download:
+            logger.warning("Share access denied due to owner permissions")
+            return Response({'detail': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+        path = os.path.join(settings.MEDIA_ROOT, str(f.owner.id), f.unique_name)
+        if not os.path.exists(path):
+            logger.error(f"Share file not found: {path}")
+            return Response({'detail': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+        logger.info(f"File shared download: {f.original_name}")
+        return FileResponse(open(path, 'rb'), as_attachment=True, filename=f.original_name)
 
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-@parser_classes([MultiPartParser, FormParser])
-def upload_file(request):
-    """
-    POST /api/storage/files/upload/
-    multipart: 'file' (required), 'comment' (optional), 'folder' (optional; id or 'null')
-    """
-    f = request.FILES.get('file')
-    if not f:
-        return Response({"detail": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+class FileMoveView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    comment = request.data.get('comment', '')
-    folder_id = request.data.get('folder', None)
+    def post(self, request, pk):
+        f = get_object_or_404(File, pk=pk, owner=request.user)
+        target_id = request.data.get('target_folder')
+        target = Folder.objects.get(pk=target_id) if target_id else None
+        if f.folder:
+            f.folder.update_child_count()
+        f.folder = target
+        f.save()
+        if target:
+            target.update_child_count()
+        logger.info(f"File moved: {f.original_name} by {request.user}")
+        return Response({'detail': 'Moved'})
 
-    if folder_id in ('null', 'None', '', None):
-        folder = None
-    else:
-        try:
-            folder = get_object_or_404(Folder, pk=int(folder_id))
-            if not (request.user.is_staff or folder.owner == request.user):
-                return Response(status=status.HTTP_403_FORBIDDEN)
-        except ValueError:
-            return Response({"detail": "invalid folder id"}, status=status.HTTP_400_BAD_REQUEST)
+class FileRenameView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    sf = StoredFile(
-        owner=request.user,
-        original_name=f.name,
-        stored_file=f,
-        comment=comment,
-        folder=folder
-    )
-    sf.save()
-    serializer = StoredFileSerializer(sf, context={'request': request})
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    def post(self, request, pk):
+        f = get_object_or_404(File, pk=pk, owner=request.user)
+        f.original_name = request.data.get('name', f.original_name)
+        f.save()
+        logger.info(f"File renamed: {f.original_name} by {request.user}")
+        return Response({'detail': 'Renamed'})
 
+class FileDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
 
-@api_view(['DELETE'])
-@permission_classes([permissions.IsAuthenticated])
-def delete_file(request, pk):
-    """DELETE /api/storage/files/<pk>/"""
-    obj = get_object_or_404(StoredFile, pk=pk)
-    if not (request.user.is_staff or obj.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    path = obj.stored_file.path if obj.stored_file else None
-    obj.delete()
-    try:
-        if path and os.path.exists(path):
-            os.remove(path)
-    except Exception:
-        pass
-    return Response(status=status.HTTP_204_NO_CONTENT)
+    def delete(self, request, pk):
+        f = get_object_or_404(File, pk=pk, owner=request.user)
+        f.delete()
+        logger.info(f"File deleted: {pk} by {request.user}")
+        return Response({'detail': 'Deleted'})
 
+class FileCommentView(APIView):
+    permission_classes = [IsAuthenticated]
 
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def rename_file(request, pk):
-    """POST /api/storage/files/<pk>/rename/ {new_name}"""
-    obj = get_object_or_404(StoredFile, pk=pk)
-    if not (request.user.is_staff or obj.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    new_name = request.data.get('new_name')
-    if not new_name:
-        return Response({"detail": "new_name required"}, status=status.HTTP_400_BAD_REQUEST)
-    obj.original_name = new_name
-    obj.save(update_fields=['original_name'])
-    return Response(StoredFileSerializer(obj, context={'request': request}).data)
-
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def comment_file(request, pk):
-    """POST /api/storage/files/<pk>/comment/ {comment}"""
-    obj = get_object_or_404(StoredFile, pk=pk)
-    if not (request.user.is_staff or obj.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    comment = request.data.get('comment', '')
-    obj.comment = comment
-    obj.save(update_fields=['comment'])
-    return Response(StoredFileSerializer(obj, context={'request': request}).data)
-
-
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def download_file(request, pk):
-    """GET /api/storage/files/<pk>/download/"""
-    obj = get_object_or_404(StoredFile, pk=pk)
-    if not (request.user.is_staff or obj.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    fp = obj.stored_file.path if obj.stored_file else None
-    if not fp or not os.path.exists(fp):
-        raise Http404
-    response = FileResponse(open(fp, 'rb'))
-    response['Content-Disposition'] = f'attachment; filename="{obj.original_name}"'
-    obj.increment_download()
-    return response
-
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def public_link(request, pk):
-    """
-    POST /api/storage/files/<pk>/public-link/
-    Generates public token and returns full URL in 'public_link' (and token).
-    (This is provided under the expected name `public_link` to match urls.)
-    """
-    obj = get_object_or_404(StoredFile, pk=pk)
-    if not (request.user.is_staff or obj.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-    token = obj.generate_public_link()
-    url = request.build_absolute_uri(f"/api/storage/public/{token}/download/")
-    return Response({"public_link": url, "token": token})
-
-
-@api_view(['GET'])
-@permission_classes([permissions.AllowAny])
-def public_download(request, token):
-    """
-    GET /api/storage/public/<token>/download/
-    Download via public token (no auth required).
-    """
-    obj = get_object_or_404(StoredFile, public_link_token=token)
-    fp = obj.stored_file.path if obj.stored_file else None
-    if not fp or not os.path.exists(fp):
-        raise Http404
-    response = FileResponse(open(fp, 'rb'))
-    response['Content-Disposition'] = f'attachment; filename="{obj.original_name}"'
-    obj.increment_download()
-    return response
-
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def move_file(request, pk):
-    """
-    POST /api/storage/files/<pk>/move/
-    payload: { target_folder: <id or null> }
-    """
-    file_obj = get_object_or_404(StoredFile, pk=pk)
-    if not (request.user.is_staff or file_obj.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-
-    target = request.data.get('target_folder', None)
-    if target in (None, '', 'null'):
-        file_obj.folder = None
-        file_obj.save(update_fields=['folder'])
-        return Response(StoredFileSerializer(file_obj, context={'request': request}).data)
-
-    try:
-        target_folder = get_object_or_404(Folder, pk=int(target))
-    except ValueError:
-        return Response({"detail": "invalid target_folder id"}, status=status.HTTP_400_BAD_REQUEST)
-
-    if not (request.user.is_staff or target_folder.owner == request.user):
-        return Response(status=status.HTTP_403_FORBIDDEN)
-
-    file_obj.folder = target_folder
-    file_obj.save(update_fields=['folder'])
-    return Response(StoredFileSerializer(file_obj, context={'request': request}).data)
+    def post(self, request, pk):
+        f = get_object_or_404(File, pk=pk, owner=request.user)
+        f.comment = request.data.get('comment', f.comment)
+        f.save()
+        logger.info(f"File comment updated: {f.original_name} by {request.user}")
+        return Response({'detail': 'Updated'})

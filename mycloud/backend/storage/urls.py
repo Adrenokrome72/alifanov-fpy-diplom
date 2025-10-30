@@ -1,20 +1,21 @@
-# backend/storage/urls.py
 from django.urls import path
-from . import views
+from .views import (
+    FolderCreateView, FolderListView, FolderRenameView, FolderDeleteView, FolderMoveView,
+    FileUploadView, FileListView, FileDownloadView, FileShareDownloadView, FileMoveView, FileRenameView, FileDeleteView, FileCommentView
+)
 
 urlpatterns = [
-    path('folders/', views.list_folders, name='folders-list'),
-    path('folders/create/', views.create_folder, name='folders-create'),
-    path('folders/<int:pk>/rename/', views.rename_folder, name='folders-rename'),
-    path('folders/<int:pk>/', views.delete_folder, name='folders-delete'),
-
-    path('files/', views.list_files, name='files-list'),
-    path('files/upload/', views.upload_file, name='files-upload'),
-    path('files/<int:pk>/', views.delete_file, name='files-delete'),
-    path('files/<int:pk>/rename/', views.rename_file, name='files-rename'),
-    path('files/<int:pk>/move/', views.move_file, name='files-move'),
-    path('files/<int:pk>/download/', views.download_file, name='files-download'),
-    path('files/<int:pk>/public-link/', views.public_link, name='files-public-link'),
-
-    path('public/<str:token>/download/', views.public_download, name='public-download'),
+    path('folders/create/', FolderCreateView.as_view(), name='folder_create'),
+    path('folders/', FolderListView.as_view(), name='folder_list'),
+    path('folders/<int:pk>/rename/', FolderRenameView.as_view(), name='folder_rename'),
+    path('folders/<int:pk>/delete/', FolderDeleteView.as_view(), name='folder_delete'),
+    path('folders/<int:pk>/move/', FolderMoveView.as_view(), name='folder_move'),
+    path('files/upload/', FileUploadView.as_view(), name='file_upload'),
+    path('files/', FileListView.as_view(), name='file_list'),
+    path('files/<int:pk>/download/', FileDownloadView.as_view(), name='file_download'),
+    path('share/<uuid:share_link>/', FileShareDownloadView.as_view(), name='file_share_download'),
+    path('files/<int:pk>/move/', FileMoveView.as_view(), name='file_move'),
+    path('files/<int:pk>/rename/', FileRenameView.as_view(), name='file_rename'),
+    path('files/<int:pk>/delete/', FileDeleteView.as_view(), name='file_delete'),
+    path('files/<int:pk>/comment/', FileCommentView.as_view(), name='file_comment'),
 ]

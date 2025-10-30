@@ -1,139 +1,94 @@
-from django.conf import settings
-from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout, get_user_model
-from django.http import JsonResponse
-from django.middleware.csrf import get_token
-from django.shortcuts import get_object_or_404
-from django.views.decorators.csrf import ensure_csrf_cookie
-
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAdminUser, AllowAny, IsAuthenticated
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
+from django.contrib.auth import authenticate, login, logout
+from .models import CustomUser
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from django.http import HttpResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
+from logging import getLogger
 
-from rest_framework.serializers import ModelSerializer, CharField, ValidationError
+logger = getLogger(__name__)
 
-User = get_user_model()
-
-
-# --- Serializers ----------------------------------------------------------------
-class UserSerializer(ModelSerializer):
-    class Meta:
-        model = User
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'is_staff')
-
-
-class RegisterSerializer(ModelSerializer):
-    password = CharField(write_only=True)
-
-    class Meta:
-        model = User
-        fields = ('username', 'password', 'email', 'first_name', 'last_name')
-
-    def validate_username(self, value):
-        import re
-        # accept letters/numbers/._- and length 4..20, must start with letter
-        if not re.match(r'^[A-Za-z][A-Za-z0-9._-]{3,19}$', value):
-            raise ValidationError('Username must start with a letter, contain only letters/numbers/._- and be 4..20 chars long')
-        return value
-
-    def create(self, validated_data):
-        pwd = validated_data.pop('password')
-        user = User(**validated_data)
-        user.set_password(pwd)
-        user.save()
-        return user
-
-
-# --- CSRF endpoint (plain Django view) -----------------------------------------
-# IMPORTANT: plain Django view (not DRF @api_view) and decorated with ensure_csrf_cookie.
-# This avoids DRF global permission classes and guarantees the csrftoken cookie is set.
 @ensure_csrf_cookie
-def csrf(request):
-    token = get_token(request)
-    return JsonResponse({'detail': 'ok', 'csrftoken': token})
+def csrf_view(request):
+    logger.info("CSRF cookie requested")
+    return HttpResponse("CSRF cookie set")
 
+class RegisterView(APIView):
+    def post(self, request):
+        data = request.data
+        # Валидация по заданию
+        username = data.get('username')
+        if not username or not username[0].isalpha() or len(username) < 4 or len(username) > 20 or not username.isalnum():
+            return Response({'detail': 'Invalid username'}, status=status.HTTP_400_BAD_REQUEST)
+        email = data.get('email')
+        if not email or '@' not in email:
+            return Response({'detail': 'Invalid email'}, status=status.HTTP_400_BAD_REQUEST)
+        password = data.get('password')
+        if not password or len(password) < 6 or not any(c.isupper() for c in password) or not any(c.isdigit() for c in password) or not any(not c.isalnum() for c in password):
+            return Response({'detail': 'Invalid password'}, status=status.HTTP_400_BAD_REQUEST)
+        if CustomUser.objects.filter(username=username).exists():
+            return Response({'detail': 'Username exists'}, status=status.HTTP_400_BAD_REQUEST)
+        user = CustomUser.objects.create_user(username=username, email=email, password=password)
+        logger.info(f"User registered: {user.username}")
+        return Response({'detail': 'Registered'}, status=status.HTTP_201_CREATED)
 
-# --- Auth endpoints ------------------------------------------------------------
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def register(request):
-    data = request.data
-    serializer = RegisterSerializer(data=data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    user = serializer.save()
-    return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
+class LoginView(APIView):
+    def post(self, request):
+        user = authenticate(username=request.data['username'], password=request.data['password'])
+        if user:
+            if user.is_blocked:
+                logger.warning(f"Blocked user tried login: {user.username}")
+                return Response({'detail': 'Blocked'}, status=status.HTTP_403_FORBIDDEN)
+            login(request, user)
+            logger.info(f"User logged in: {user.username}")
+            return Response({'detail': 'Logged in'})
+        logger.warning("Invalid login attempt")
+        return Response({'detail': 'Invalid credentials'}, status=status.HTTP_400_BAD_REQUEST)
 
+class LogoutView(APIView):
+    def post(self, request):
+        logout(request)
+        logger.info("User logged out")
+        return Response({'detail': 'Logged out'})
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def login(request):
-    data = request.data if isinstance(request.data, dict) else {}
-    username = data.get('username')
-    password = data.get('password')
-    if not username or not password:
-        return Response({'detail': 'username and password required'}, status=status.HTTP_400_BAD_REQUEST)
-
-    user = authenticate(request, username=username, password=password)
-    if user is None:
-        return Response({'detail': 'invalid credentials'}, status=status.HTTP_400_BAD_REQUEST)
-
-    auth_login(request, user)
-
-    # ensure session saved and key present
-    try:
-        request.session.save()
-    except Exception:
-        pass
-    session_key = request.session.session_key
-
-    # ensure CSRF token exists
-    token = get_token(request)
-
-    response = Response({'ok': True, 'username': user.username, 'id': user.id})
-    # set sessionid cookie explicitly (so non-browser HTTP clients can pick it up)
-    if session_key:
-        response.set_cookie(
-            settings.SESSION_COOKIE_NAME,
-            session_key,
-            httponly=True,
-            samesite=getattr(settings, 'SESSION_COOKIE_SAMESITE', 'Lax'),
-            secure=getattr(settings, 'SESSION_COOKIE_SECURE', False),
-            path=getattr(settings, 'SESSION_COOKIE_PATH', '/'),
-        )
-    # csrf cookie
-    response.set_cookie(
-        settings.CSRF_COOKIE_NAME,
-        token,
-        httponly=False,
-        samesite=getattr(settings, 'CSRF_COOKIE_SAMESITE', 'Lax'),
-        secure=getattr(settings, 'CSRF_COOKIE_SECURE', False),
-        path=getattr(settings, 'CSRF_COOKIE_PATH', '/'),
-    )
-    return response
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def logout(request):
-    auth_logout(request)
-    return Response({'ok': True})
-
-
-# --- Admin toggle_block --------------------------------------------------------
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-def toggle_block(request, pk):
-    user = get_object_or_404(User, pk=pk)
-    if not hasattr(user, 'is_blocked'):
-        return Response({'detail': 'User model missing is_blocked field'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    user.is_blocked = not bool(user.is_blocked)
-    user.save(update_fields=['is_blocked'])
-    return Response({'id': user.id, 'is_blocked': user.is_blocked})
-
-
-# --- ViewSet for admin listing -------------------------------------------------
-class UserViewSet(viewsets.ReadOnlyModelViewSet):
+class UserListView(APIView):
     permission_classes = [IsAdminUser]
-    queryset = User.objects.all().order_by('-id')
-    serializer_class = UserSerializer
+
+    def get(self, request):
+        users = CustomUser.objects.all().values('id', 'username', 'email', 'is_staff', 'is_blocked', 'storage_limit', 'used_storage', 'can_upload', 'can_download', 'can_view')
+        return Response(list(users))
+
+class UserManageView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            user = CustomUser.objects.get(pk=pk)
+            action = request.data.get('action')
+            if action == 'block':
+                user.is_blocked = True
+            elif action == 'unblock':
+                user.is_blocked = False
+            elif action == 'delete':
+                user.delete()
+                logger.info(f"User deleted: {pk}")
+                return Response({'detail': 'Deleted'})
+            elif action == 'set_admin':
+                user.is_staff = True
+            elif action == 'remove_admin':
+                user.is_staff = False
+            elif action == 'set_limit':
+                user.storage_limit = request.data.get('limit', user.storage_limit)
+            elif action == 'toggle_upload':
+                user.can_upload = not user.can_upload
+            elif action == 'toggle_download':
+                user.can_download = not user.can_download
+            elif action == 'toggle_view':
+                user.can_view = not user.can_view
+            user.save()
+            logger.info(f"Admin action on {user.username}: {action}")
+            return Response({'detail': 'Updated'})
+        except CustomUser.DoesNotExist:
+            return Response({'detail': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
