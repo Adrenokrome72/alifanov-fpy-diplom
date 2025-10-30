@@ -36,38 +36,36 @@ test('register -> login -> create folder -> upload file -> download -> share', a
     data: JSON.stringify({ username, password, email }),
   };
   const regResp = await request.post(`${API_BASE}/api/users/register/`, regOptions);
-  console.log('Register response:', await regResp.text(), regResp.status());
+  console.log('Register response:', await regResp.text(), regResp.status(), regResp.headers());
   expect(regResp.status()).toBe(201);
+  const regCookies = parseSetCookie(regResp.headers()['set-cookie']);
+  console.log('Register cookies:', regCookies);
+  if (regCookies['sessionid']) {
+    cookieHeader = Object.entries({ ...csrfCookies, ...regCookies }).map(([k, v]) => `${k}=${v}`).join('; ');
+    csrftoken = regCookies['csrftoken'] || csrfCookies['csrftoken'];
+  }
 
   // Login
   const loginResp = await request.post(`${API_BASE}/api/users/login/`, {
     headers: { 'Cookie': cookieHeader, 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
     data: JSON.stringify({ username, password }),
   });
-  console.log('Login response:', await loginResp.text(), loginResp.status());
+  console.log('Login response:', await loginResp.text(), loginResp.status(), loginResp.headers());
   expect(loginResp.ok()).toBeTruthy();
-
   const loginCookies = parseSetCookie(loginResp.headers()['set-cookie']);
-  const merged = { ...csrfCookies, ...loginCookies };
-  cookieHeader = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('; ');
-  csrftoken = merged['csrftoken'] || csrfCookies['csrftoken'];
-  console.log('Login cookies:', merged);
-
-  // Refresh CSRF before creating folder
-  const csrfRefresh = await request.get(`${API_BASE}/api/users/csrf/`, {
-    headers: { 'Cookie': cookieHeader },
-  });
-  console.log('CSRF refresh response:', await csrfRefresh.text(), csrfRefresh.status());
-  expect(csrfRefresh.ok()).toBeTruthy();
-  const newCsrfCookies = parseSetCookie(csrfRefresh.headers()['set-cookie']);
-  csrftoken = newCsrfCookies['csrftoken'] || csrftoken;
-  cookieHeader = Object.entries({ ...merged, ...newCsrfCookies }).map(([k, v]) => `${k}=${v}`).join('; ');
-  console.log('Merged cookies after refresh:', cookieHeader);
+  console.log('Login cookies:', loginCookies);
+  if (loginCookies['sessionid']) {
+    const merged = { ...csrfCookies, ...regCookies, ...loginCookies };
+    cookieHeader = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('; ');
+    csrftoken = loginCookies['csrftoken'] || regCookies['csrftoken'] || csrfCookies['csrftoken'];
+  } else {
+    console.log('WARNING: No sessionid in login response');
+  }
 
   // Create folder
   const createFolderResp = await request.post(`${API_BASE}/api/storage/folders/create/`, {
     headers: { 'Cookie': cookieHeader, 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
-    data: JSON.stringify({ name: 'pw-folder' }),
+    data: JSON.stringify({ name: 'testfolder', parent: null }),
   });
   console.log('Create folder response:', await createFolderResp.text(), createFolderResp.status());
   expect(createFolderResp.ok()).toBeTruthy();
@@ -94,7 +92,7 @@ test('register -> login -> create folder -> upload file -> download -> share', a
   const uploaded = await uploadResp.json();
 
   // List files
-  const listResp = await request.get(`${API_BASE}/api/storage/files/?folder_id=${folderJson.id}`, { headers: { Cookie: cookieHeader } });
+  const listResp = await request.get(`${API_BASE}/api/storage/files/?folder_id=${folderJson.id}`, { headers: { 'Cookie': cookieHeader } });
   console.log('List files response:', await listResp.text(), listResp.status());
   expect(listResp.ok()).toBeTruthy();
   const listJson = await listResp.json();
@@ -102,7 +100,7 @@ test('register -> login -> create folder -> upload file -> download -> share', a
   expect(listJson.some(x => x.id === uploaded.id)).toBeTruthy();
 
   // Download file
-  const downloadResp = await request.get(`${API_BASE}/api/storage/files/${uploaded.id}/download/`, { headers: { Cookie: cookieHeader } });
+  const downloadResp = await request.get(`${API_BASE}/api/storage/files/${uploaded.id}/download/`, { headers: { 'Cookie': cookieHeader } });
   console.log('Download response:', await downloadResp.text(), downloadResp.status());
   expect(downloadResp.ok()).toBeTruthy();
 

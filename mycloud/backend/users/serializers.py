@@ -68,3 +68,17 @@ class AdminUserSerializer(serializers.ModelSerializer):
     def get_is_blocked(self, obj):
         # safe access: if no profile exists, treat as not blocked
         return bool(getattr(getattr(obj, 'profile', None), 'is_blocked', False))
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password']
+        extra_kwargs = {'password': {'write_only': True}}
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data['email'],
+            password=validated_data['password']
+        )
+        return user

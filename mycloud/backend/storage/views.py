@@ -96,19 +96,19 @@ class FileUploadView(APIView):
             owner=request.user,
             folder=folder
         )
-        path = os.path.join(settings.MEDIA_ROOT, str(request.user.id), f.unique_name)
+        path = os.path.join(settings.MEDIA_ROOT, str(request.user.id), str(f.unique_name))  # Convert UUID to string
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb+') as dest:
             for chunk in file.chunks():
                 dest.write(chunk)
         # Thumbnail if image
         if f.original_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-            f.thumbnail = path  # ImageKit обработает
+            f.thumbnail = path
             f.save()
         if folder:
             folder.update_child_count()
         logger.info(f"File uploaded: {f.original_name} by {request.user}")
-        return Response({'id': f.id, 'name': f.original_name, 'download_url': f'{settings.MEDIA_URL}{f.unique_name}'}, status=status.HTTP_201_CREATED)
+        return Response({'id': f.id, 'name': f.original_name, 'download_url': f'{settings.MEDIA_URL}{f.unique_name}', 'share_link': str(f.share_link)}, status=status.HTTP_201_CREATED)
 
 class FileListView(APIView):
     permission_classes = [IsAuthenticated]
