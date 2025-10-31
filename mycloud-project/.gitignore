@@ -1,0 +1,121 @@
+# ==========================
+# === Python / Django ===
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+.envrc
+*.env
+*.env.*
+
+# Django stuff
+*.log
+*.pot
+*.pyc
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+tmp/
+backup/
+local_settings.py
+
+# Migrations cache (optional to ignore)
+*/migrations/__pycache__/
+*/migrations/*.pyc
+
+# ==========================
+# === Frontend (React) ===
+# ==========================
+frontend/node_modules/
+frontend/.npm/
+frontend/.cache/
+frontend/dist/
+frontend/build/
+frontend/coverage/
+frontend/.eslintcache
+frontend/.parcel-cache
+frontend/.vite/
+frontend/.next/
+frontend/.turbo/
+frontend/.yarn/
+frontend/.pnp.*
+
+# npm / yarn lock if not used universally
+package-lock.json
+yarn-error.log
+pnpm-lock.yaml
+
+# ==========================
+# === Tests / Reports ===
+# ==========================
+.coverage
+htmlcov/
+pytest_cache/
+jest-coverage/
+junit.xml
+test-results.xml
+*.lcov
+*.coverage
+.nyc_output/
+
+# ==========================
+# === OS / IDE / Tools ===
+# ==========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+*.tmp
+*.orig
+*.log
+
+# ==========================
+# === Docker / CI Artifacts ===
+# ==========================
+docker-compose.override.yml
+*.pid
+*.seed
+*.lock
+.gitlab-ci-local/
+.gitlab-runner/
+__pycache__/
+.cache/
+.wercker/
+*.tar
+*.gz
+
+# ==========================
+# === WSL / Windows Artifacts ===
+# ==========================
+*.lnk
+desktop.ini
+*.bat
+*.ps1
+*.sh
+*.cmd
+*.bak
+*.old
+
+# ==========================
+# === Custom project folders ===
+# ==========================
+/tls_pass/
+/certs/
+/secrets/
+/local_cluster/
+/tmp_data/
+/frontend/.env.local
+/backend/.env.local
+/backend/.pytest_cache/
