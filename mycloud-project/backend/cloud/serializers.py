@@ -11,6 +11,7 @@ User = get_user_model()
 USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{3,19}$")
 PASSWORD_RE = re.compile(r"^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$")
 
+
 class RegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     full_name = serializers.CharField(max_length=255, allow_blank=True, required=False)
@@ -43,17 +44,20 @@ class RegistrationSerializer(serializers.Serializer):
         email = validated_data["email"]
         password = validated_data["password"]
         full_name = validated_data.get("full_name", "")
-        user = User.objects.create_user(username=username, email=email)
-        user.set_password(password)
-        user.save()
-        # profile will be created by signal; update full_name
+
+        # Use create_user with password to ensure proper hashing and signals
+        user = User.objects.create_user(username=username, email=email, password=password)
+
+        # profile is created by signal; update full_name if profile exists
         profile = getattr(user, "profile", None)
         if profile:
             profile.full_name = full_name
             profile.save(update_fields=["full_name"])
         else:
+            # Fallback: create profile if signal didn't (defensive)
             UserProfile.objects.create(user=user, full_name=full_name)
         return user
+
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
@@ -66,11 +70,13 @@ class LoginSerializer(serializers.Serializer):
         attrs["user"] = user
         return attrs
 
+
 class FolderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Folder
         fields = ["id", "owner", "name", "parent", "created_at"]
         read_only_fields = ["id", "owner", "created_at"]
+
 
 class UserFileSerializer(serializers.ModelSerializer):
     file = serializers.FileField(required=True)
@@ -111,6 +117,7 @@ class UserFileSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(f"/api/external/download/{obj.share_token}/")
         return None
 
+
 class AdminUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     quota = serializers.SerializerMethodField()
@@ -141,7 +148,6 @@ class AdminUserSerializer(serializers.ModelSerializer):
         return profile.quota if profile else None
 
     def get_files_count(self, obj):
-        # efficient count
         return obj.files.count()
 
     def get_files_size(self, obj):

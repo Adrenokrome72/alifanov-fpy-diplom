@@ -2,16 +2,18 @@
 import os
 import tempfile
 import zipfile
+import secrets
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
-from django.http import FileResponse, Http404, StreamingHttpResponse
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from django.http import FileResponse, Http404, StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
-from django.contrib.auth import login as django_login, logout as django_logout
-from django.contrib.auth import get_user_model
+from django.contrib.auth import login as django_login, logout as django_logout, get_user_model
 from django.db import transaction
+from django.views.decorators.csrf import ensure_csrf_cookie
 
 from .models import Folder, UserFile
 from .serializers import (
@@ -24,11 +26,13 @@ from .serializers import (
 
 User = get_user_model()
 
+
 class IsOwnerOrAdmin(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
         if request.user.is_staff:
             return True
         return getattr(obj, "owner", None) == request.user
+
 
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -40,6 +44,7 @@ class RegisterView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         user = serializer.save()
         return Response({"detail": "user created", "username": user.username}, status=status.HTTP_201_CREATED)
+
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -53,12 +58,14 @@ class LoginView(APIView):
         django_login(request, user)
         return Response({"detail": "logged in", "username": user.username}, status=status.HTTP_200_OK)
 
+
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
         django_logout(request)
         return Response({"detail": "logged out"}, status=status.HTTP_200_OK)
+
 
 class FolderViewSet(viewsets.ModelViewSet):
     queryset = Folder.objects.all()
@@ -86,9 +93,6 @@ class FolderViewSet(viewsets.ModelViewSet):
         return ids
 
     def _is_descendant(self, candidate, root):
-        """
-        Проверить, является ли candidate потомком root.
-        """
         node = candidate
         while node:
             if node.pk == root.pk:
@@ -133,7 +137,6 @@ class FolderViewSet(viewsets.ModelViewSet):
         if parent.pk == folder.pk:
             return Response({"detail": "Cannot move folder into itself"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # защита от перемещения внутрь потомка
         if self._is_descendant(parent, folder):
             return Response({"detail": "Cannot move folder into its descendant"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -178,13 +181,8 @@ class FolderViewSet(viewsets.ModelViewSet):
         return Response({"detail": "deleted"}, status=status.HTTP_200_OK)
 
     def _compute_relative_arcname(self, file_obj, root_folder):
-        """
-        Вычисляет относительный путь внутри zip для файла file_obj относительно root_folder.
-        Формат: <root_folder.name>/<subpath...>/<original_name>
-        """
         parts = []
         node = file_obj.folder
-        # Сборим части пути до root_folder (исключая root_folder)
         while node and node.pk != root_folder.pk:
             parts.append(node.name)
             node = node.parent
@@ -198,24 +196,16 @@ class FolderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="download_zip")
     def download_zip(self, request, pk=None):
-        """
-        Создаёт временный zip из всех файлов в папке (рекурсивно) и отдает его в streaming-ответе.
-        Файлы внутри zip будут иметь структуру:
-            <folder_name>/<subfolder...>/<original_filename>
-        После завершения передачи временный файл удаляется.
-        """
         folder = get_object_or_404(Folder, pk=pk)
         if not (request.user.is_staff or folder.owner == request.user):
             return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
 
-        # собираем все файлы в subtree
         subtree_ids = self._collect_subtree(folder)
-        files_qs = UserFile.objects.filter(folder_id__in=subtree_ids)  # включает файлы в самой папке и подпапках
+        files_qs = UserFile.objects.filter(folder_id__in=subtree_ids)
 
-        # создаём временный zip файл на диске
         tmp = tempfile.NamedTemporaryFile(prefix="folderzip_", suffix=".zip", delete=False)
         tmp_name = tmp.name
-        tmp.close()  # закроем дескриптор, чтобы ziplib мог открыть путь
+        tmp.close()
 
         try:
             with zipfile.ZipFile(tmp_name, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -224,10 +214,8 @@ class FolderViewSet(viewsets.ModelViewSet):
                     if not os.path.exists(fpath):
                         continue
                     arcname = self._compute_relative_arcname(f, folder)
-                    # note: arcname должен быть unix-подобным в zip
                     zf.write(fpath, arcname=arcname)
 
-            # StreamingHttpResponse с удалением файла после отправки
             def file_iterator(path, chunk_size=8192):
                 try:
                     with open(path, "rb") as fh:
@@ -246,7 +234,6 @@ class FolderViewSet(viewsets.ModelViewSet):
             resp["Content-Disposition"] = f'attachment; filename="{folder.name}.zip"'
             return resp
         except Exception as exc:
-            # попытка удалить tmp файл при ошибке
             try:
                 os.remove(tmp_name)
             except Exception:
@@ -357,7 +344,7 @@ class AdminUserViewSet(viewsets.ViewSet):
     """
     Admin API для управления пользователями.
     """
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsAdminUser]
 
     def list(self, request):
         qs = User.objects.all().order_by("id")
@@ -430,3 +417,56 @@ def external_download(request, token):
         raise Http404("Файл не найден")
     file_obj.mark_downloaded()
     return FileResponse(open(fpath, "rb"), as_attachment=True, filename=file_obj.original_name)
+
+
+@ensure_csrf_cookie
+def csrf_token_view(request):
+    # ensure_csrf_cookie гарантирует, что csrftoken cookie будет установлен
+    return JsonResponse({"detail": "csrf cookie set"})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def current_user_view(request):
+    """
+    Возвращает информацию о текущем пользователе:
+      - id, username, email, full_name, is_staff, is_active
+      - профиль: quota (в байтах), used_bytes
+    """
+    user = request.user
+    profile = getattr(user, "profile", None)
+
+    # Compute used_bytes in a robust way by calling model helper if exists
+    used_bytes = None
+    if profile and hasattr(profile, "get_used_bytes"):
+        try:
+            used_bytes = profile.get_used_bytes()
+        except Exception:
+            used_bytes = None
+    else:
+        # fallback to aggregate on user's files
+        try:
+            used_bytes = int(user.files.aggregate(total=Sum("size"))["total"] or 0)
+        except Exception:
+            used_bytes = None
+
+    full_name = ""
+    if profile and getattr(profile, "full_name", ""):
+        full_name = profile.full_name
+    else:
+        # try common user fields
+        full_name = getattr(user, "full_name", "") or getattr(user, "first_name", "") or ""
+
+    data = {
+        "id": user.pk,
+        "username": user.username,
+        "email": user.email,
+        "full_name": full_name,
+        "is_staff": bool(user.is_staff),
+        "is_active": bool(user.is_active),
+        "profile": {
+            "quota": getattr(profile, "quota", None),
+            "used_bytes": used_bytes,
+        },
+    }
+    return Response(data)

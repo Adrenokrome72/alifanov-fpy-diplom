@@ -1,3 +1,4 @@
+// frontend/src/__tests__/NavBar.test.jsx
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import NavBar from '../components/NavBar';

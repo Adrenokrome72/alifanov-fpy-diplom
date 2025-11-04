@@ -41,11 +41,14 @@ module.exports = {
     historyApiFallback: true,
     port: 3000,
     hot: true,
-    proxy: {
-      '/api': {
+    proxy: [
+      {
+        context: ['/api', '/auth'], // любые префиксы, которые нужно проксировать
         target: 'http://localhost:8000',
         changeOrigin: true,
-      },
-    },
+        secure: false,
+        // optional: logLevel: 'debug'
+      }
+    ],
   },
 };
