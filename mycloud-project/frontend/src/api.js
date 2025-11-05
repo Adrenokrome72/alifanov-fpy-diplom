@@ -1,12 +1,7 @@
 // frontend/src/api.js
 // Унифицированная обёртка для fetch с поддержкой CSRF, FormData и дружелюбной обработкой ошибок.
-// Экспортирует:
-//   - getCsrfToken  (named)
-//   - apiFetch      (named)
-//   - default export -> apiFetch (для совместимости с предыдущими import default)
 
 export function getCsrfToken() {
-  // Ищем cookie csrftoken (Django -> csrftoken)
   const m = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/);
   return m ? decodeURIComponent(m[2]) : "";
 }
@@ -48,12 +43,10 @@ export async function apiFetch(path, options = {}) {
   if (contentType.includes("application/json")) {
     data = await res.json().catch(() => null);
   } else {
-    // может быть text (например скачивание/stream), или пустой ответ
     data = await res.text().catch(() => null);
   }
 
   if (!res.ok) {
-    // достаём информативное сообщение, если есть
     const message = (data && typeof data === "object" && (data.detail || data.error))
       ? (data.detail || data.error)
       : (typeof data === "string" && data.length ? data : `HTTP ${res.status}`);
@@ -66,5 +59,4 @@ export async function apiFetch(path, options = {}) {
   return data;
 }
 
-// Default export для обратной совместимости
 export default apiFetch;

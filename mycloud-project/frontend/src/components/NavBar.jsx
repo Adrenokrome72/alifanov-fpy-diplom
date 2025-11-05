@@ -2,8 +2,9 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
-import { logout } from "../features/authSlice";
+import { logout, fetchCurrentUser } from "../features/authSlice";
 import formatBytes from "../utils/formatBytes";
+import { showToast } from "../utils/toast";
 
 /* DEFAULT_QUOTA can be kept in config */
 const DEFAULT_QUOTA = 10 * 1024 * 1024 * 1024; // 10 GB
@@ -13,24 +14,32 @@ export default function NavBar() {
   const navigate = useNavigate();
   const user = useSelector(s => s.auth.user);
 
-  // local state for dynamic used_bytes (fallback when backend doesn't provide)
   const [localUsed, setLocalUsed] = useState(user?.profile?.used_bytes ?? 0);
 
   useEffect(() => {
-    // keep localUsed in sync with Redux user profile updates
-    setLocalUsed(user?.profile?.used_bytes ?? localUsed);
+    setLocalUsed(user?.profile?.used_bytes ?? 0);
   }, [user?.profile?.used_bytes]);
 
   useEffect(() => {
     function onUsage(e) {
       const used = Number(e?.detail?.used || 0);
       setLocalUsed(used);
-      // also dispatch custom event to inform others if needed
-      // window.dispatchEvent(new CustomEvent('mycloud:user:usage_updated', { detail: { used } }));
     }
     window.addEventListener("mycloud:usage", onUsage);
     return () => window.removeEventListener("mycloud:usage", onUsage);
   }, []);
+
+  // Try to ensure we have fresh user data on mount
+  useEffect(() => {
+    dispatch(fetchCurrentUser()).catch(()=>{ /* ignore */});
+    // expose convenience function used by some components
+    window.fetchCurrentUser = async () => {
+      try {
+        const res = await dispatch(fetchCurrentUser()).unwrap();
+        return res;
+      } catch (e) { return null; }
+    };
+  }, [dispatch]);
 
   const firstName = (() => {
     const full = (user?.full_name || user?.profile?.full_name || "").trim();
@@ -39,15 +48,16 @@ export default function NavBar() {
       if (parts.length) return parts[0];
     }
     if (user?.username) return user.username;
-    if (user?.email) return user.email?.split("@")[0] ?? "User";
-    return "User";
+    if (user?.email) return user.email?.split("@")[0] ?? "Пользователь";
+    return "Пользователь";
   })();
 
   async function doLogout() {
     try {
       await dispatch(logout()).unwrap();
+      showToast('Вы вышли', { type: 'success' });
     } catch (err) {
-      console.error(err);
+      showToast('Ошибка при выходе', { type: 'error' });
     } finally {
       navigate("/login");
     }
@@ -60,14 +70,14 @@ export default function NavBar() {
   const percentFree = quota ? Math.round((remaining / quota) * 100) : 0;
 
   return (
-    <header className="header">
-      <div className="header-inner container" style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+    <header className="header bg-slate-50 shadow-sm">
+      <div className="header-inner container mx-auto p-3" style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Link to="/" className="brand">MyCloud</Link>
+          <Link to="/" className="brand font-bold text-lg">MyCloud</Link>
           <nav className="nav" aria-label="Main navigation" style={{display:"flex", gap:12}}>
-            <Link to="/" className="link">Home</Link>
-            <Link to="/files" className="link">Files</Link>
-            {user && user.is_staff && <Link to="/admin" className="link">Admin</Link>}
+            <Link to="/" className="link">Главная</Link>
+            <Link to="/files" className="link">Файлы</Link>
+            {user && user.is_staff && <Link to="/admin" className="link">Админ</Link>}
           </nav>
         </div>
 
@@ -77,15 +87,15 @@ export default function NavBar() {
               <div style={{textAlign:"right"}}>
                 <div className="text-sm">Привет, <strong>{firstName}</strong>!</div>
                 <div className="text-xs text-gray-500">
-                  {formatBytes(remaining)} свободно ({percentFree}%)
+                  Осталось: {formatBytes(remaining)} ({percentFree}%)
                 </div>
               </div>
-              <button className="btn" onClick={doLogout}>Logout</button>
+              <button className="btn bg-white border rounded px-3 py-1" onClick={doLogout}>Выйти</button>
             </>
           ) : (
             <>
-              <Link to="/login" className="btn">Login</Link>
-              <Link to="/register" className="btn btn-primary">Register</Link>
+              <Link to="/login" className="btn border rounded px-3 py-1">Войти</Link>
+              <Link to="/register" className="btn btn-primary px-3 py-1 bg-sky-600 text-white rounded">Регистрация</Link>
             </>
           )}
         </div>
