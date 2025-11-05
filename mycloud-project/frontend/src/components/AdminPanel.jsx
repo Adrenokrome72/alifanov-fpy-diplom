@@ -1,169 +1,129 @@
 // frontend/src/components/AdminPanel.jsx
 import React, { useEffect, useState } from "react";
-import { useDispatch, useSelector } from "react-redux";
-import {
-  fetchAdminUsers,
-  setUserQuota,
-  setUserAdmin,
-  toggleUserActive,
-  deleteUser,
-} from "../features/adminSlice";
+import apiFetch from "../api";
+import parseBytes from "../utils/parseBytes";
 import formatBytes from "../utils/formatBytes";
+import { showToast } from "../utils/toast";
 
 /**
- * AdminPanel - list users, set quota, toggle admin/active, delete user.
- *
- * Requires store to include admin reducer and apiFetch to be working.
+ * Admin panel expects backend endpoints:
+ * GET  /api/admin-users/                -> list users with profile
+ * POST /api/admin-users/{id}/set_quota/ -> set quota (body: { quota: <bytes> })
+ * (adjust endpoints if your backend differs)
  */
 
 export default function AdminPanel() {
-  const dispatch = useDispatch();
-  const users = useSelector((s) => s.admin.users || []);
-  const status = useSelector((s) => s.admin.status);
-  const error = useSelector((s) => s.admin.error);
-  const [editingQuota, setEditingQuota] = useState({}); // { userId: quotaValue }
-  const [busy, setBusy] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [editingQuota, setEditingQuota] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch("/api/admin-users/");
+      setUsers(Array.isArray(data) ? data : []);
+      const map = {};
+      (data || []).forEach(u => {
+        map[u.id] = u.profile?.quota != null ? String(u.profile.quota) : "";
+      });
+      setEditingQuota(map);
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "Не удалось загрузить пользователей", { type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    dispatch(fetchAdminUsers());
-  }, [dispatch]);
-
-  const refresh = () => dispatch(fetchAdminUsers());
-
-  const onQuotaChange = (id, value) => {
-    setEditingQuota((p) => ({ ...p, [id]: value }));
-  };
+    loadUsers();
+  }, []);
 
   const saveQuota = async (id) => {
     const raw = editingQuota[id];
-    const q = Number(raw);
-    if (!Number.isFinite(q) || q < 0) {
-      alert("Quota must be a non-negative integer (bytes).");
+    const parsed = parseBytes(raw);
+    if (parsed === null) {
+      showToast("Неверный формат квоты. Используйте 15GB или 500MB или число (байты).", { type: "error" });
       return;
     }
-    setBusy(true);
     try {
-      await dispatch(setUserQuota({ id, quota: q })).unwrap();
-      await refresh();
-      alert("Quota updated");
+      // backend route per your URLconf: admin-users/{pk}/set_quota/
+      await apiFetch(`/api/admin-users/${id}/set_quota/`, { method: "POST", body: { quota: parsed } });
+      showToast("Квота сохранена", { type: "success" });
+      await loadUsers();
+      // also ask frontend to refresh user profile if global fn present
+      if (window.fetchCurrentUser) await window.fetchCurrentUser();
     } catch (err) {
       console.error(err);
-      alert("Failed to set quota");
-    } finally {
-      setBusy(false);
+      showToast(err.message || "Ошибка сохранения квоты", { type: "error" });
     }
   };
 
-  const toggleAdmin = async (id, current) => {
-    setBusy(true);
+  const toggleAdmin = async (id, makeAdmin) => {
     try {
-      await dispatch(setUserAdmin({ id, is_admin: !current })).unwrap();
-      await refresh();
+      await apiFetch(`/api/admin-users/${id}/set_admin/`, { method: "POST", body: { is_admin: !!makeAdmin } });
+      showToast("Роль обновлена", { type: "success" });
+      await loadUsers();
     } catch (err) {
       console.error(err);
-      alert("Failed to change admin flag");
-    } finally {
-      setBusy(false);
+      showToast(err.message || "Ошибка обновления роли", { type: "error" });
     }
   };
 
-  const toggleActive = async (id, current) => {
-    setBusy(true);
+  const toggleActive = async (id) => {
     try {
-      await dispatch(toggleUserActive({ id, is_active: !current })).unwrap();
-      await refresh();
+      await apiFetch(`/api/admin-users/${id}/toggle_active/`, { method: "POST", body: {} });
+      showToast("Статус пользователя обновлён", { type: "success" });
+      await loadUsers();
     } catch (err) {
       console.error(err);
-      alert("Failed to toggle active");
-    } finally {
-      setBusy(false);
+      showToast(err.message || "Ошибка обновления статуса", { type: "error" });
     }
   };
 
-  const onDelete = async (id) => {
-    if (!window.confirm("Delete user and ALL their data? This is irreversible. Click OK to proceed.")) return;
-    setBusy(true);
+  const deleteUser = async (id) => {
+    if (!window.confirm("Удалить пользователя и его данные?")) return;
     try {
-      // ask purge = true to remove files
-      await dispatch(deleteUser({ id, purge: true })).unwrap();
-      await refresh();
-      alert("User deleted");
+      await apiFetch(`/api/admin-users/${id}/`, { method: "DELETE" });
+      showToast("Пользователь удалён", { type: "success" });
+      await loadUsers();
     } catch (err) {
       console.error(err);
-      alert("Delete failed");
-    } finally {
-      setBusy(false);
+      showToast(err.message || "Ошибка удаления пользователя", { type: "error" });
     }
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-semibold mb-4">Admin — Users</h1>
+    <div className="container mx-auto p-6">
+      <div className="card">
+        <h2 className="font-semibold">Административная панель</h2>
+        <div className="text-sm text-gray-600 mt-2">Управление пользователями и квотами</div>
 
-      {status === "loading" && <div className="mb-4">Loading users…</div>}
-      {error && <div className="mb-4 text-red-600">Error: {String(error)}</div>}
+        {loading ? <div>Loading...</div> : (
+          <div style={{marginTop:12, display:"grid", gap:8}}>
+            {users.map(u => (
+              <div key={u.id} className="admin-row" style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:8, borderBottom:"1px solid #eee"}}>
+                <div style={{display:"flex", flexDirection:"column"}}>
+                  <div><strong>{u.username}</strong> — {u.full_name || u.profile?.full_name || ""}</div>
+                  <div className="text-xs text-gray-500">Used: {formatBytes(u.profile?.used_bytes ?? 0)}</div>
+                </div>
 
-      <div className="space-y-3">
-        {users.map((u) => (
-          <div key={u.id} className="bg-white p-3 rounded shadow flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <div className="font-semibold text-lg">
-                {u.username}{" "}
-                {u.is_staff && <span className="ml-2 px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded">ADMIN</span>}
-                {!u.is_active && <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded">DISABLED</span>}
+                <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                  <input
+                    value={editingQuota[u.id] ?? ""}
+                    onChange={(e)=>setEditingQuota(prev=>({ ...prev, [u.id]: e.target.value }))}
+                    placeholder="Например 15GB или 500MB"
+                    className="border p-1 rounded"
+                  />
+                  <button className="btn" onClick={() => saveQuota(u.id)}>Save</button>
+
+                  <button className="btn" onClick={() => toggleAdmin(u.id, !u.is_staff)}>{u.is_staff ? "Revoke Admin" : "Make Admin"}</button>
+                  <button className="btn" onClick={() => toggleActive(u.id)}>{u.is_active ? "Disable" : "Enable"}</button>
+                  <button className="btn" onClick={() => deleteUser(u.id)}>Delete</button>
+                </div>
               </div>
-              <div className="text-sm text-gray-600">{u.email}</div>
-              <div className="text-xs text-gray-500 mt-1">Files: {u.files_count ?? 0} — Used: {formatBytes(u.files_size ?? 0)}</div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-2 items-stretch">
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min="0"
-                  className="border p-1 rounded w-36"
-                  value={editingQuota[u.id] ?? (u.quota ?? "")}
-                  onChange={(e) => onQuotaChange(u.id, e.target.value)}
-                  placeholder="quota (bytes)"
-                />
-                <button
-                  onClick={() => saveQuota(u.id)}
-                  className="px-3 py-1 bg-sky-600 text-white rounded"
-                  disabled={busy}
-                >
-                  Set quota
-                </button>
-              </div>
-
-              <button
-                onClick={() => toggleAdmin(u.id, u.is_staff)}
-                className="px-3 py-1 border rounded"
-                disabled={busy}
-              >
-                {u.is_staff ? "Revoke admin" : "Make admin"}
-              </button>
-
-              <button
-                onClick={() => toggleActive(u.id, u.is_active)}
-                className="px-3 py-1 border rounded"
-                disabled={busy}
-              >
-                {u.is_active ? "Disable" : "Enable"}
-              </button>
-
-              <button
-                onClick={() => onDelete(u.id)}
-                className="px-3 py-1 bg-red-600 text-white rounded"
-                disabled={busy}
-              >
-                Delete
-              </button>
-            </div>
+            ))}
           </div>
-        ))}
-
-        {users.length === 0 && status !== "loading" && (
-          <div className="text-sm text-gray-500">No users found.</div>
         )}
       </div>
     </div>

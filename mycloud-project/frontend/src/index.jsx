@@ -1,3 +1,4 @@
+// frontend/src/index.jsx
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Provider } from 'react-redux';
@@ -5,13 +6,14 @@ import { BrowserRouter } from 'react-router-dom';
 import store from './store';
 import App from './App';
 import './styles/global.css';
+import ToastContainer from './components/ToastContainer';
 
-const container = document.getElementById('root');
-const root = createRoot(container);
+const root = createRoot(document.getElementById('root'));
 root.render(
-  <Provider store={store}>
-    <BrowserRouter>
+  <BrowserRouter>
+    <Provider store={store}>
       <App />
-    </BrowserRouter>
-  </Provider>
+      <ToastContainer />
+    </Provider>
+  </BrowserRouter>
 );

@@ -8,7 +8,6 @@ import Login from "./components/Login";
 import Register from "./components/Register";
 import AdminPanel from "./components/AdminPanel";
 import Home from "./components/Home";
-// Если у вас thunk называется иначе — подставьте ваше имя
 import { fetchCurrentUser } from "./features/authSlice";
 
 export default function App() {
@@ -17,9 +16,17 @@ export default function App() {
   const authStatus = useSelector((s) => s.auth.status);
 
   useEffect(() => {
-    // Попытка узнать текущего пользователя (если thunk есть в authSlice)
+    // при старте попытаемся получить текущего пользователя
     if (typeof fetchCurrentUser === "function") {
-      dispatch(fetchCurrentUser()).catch(() => {});
+      dispatch(fetchCurrentUser()).catch(()=>{});
+      // Предоставим глобальную функцию для ручного триггера обновления профиля
+      window.fetchCurrentUser = async () => {
+        try {
+          await dispatch(fetchCurrentUser()).unwrap();
+        } catch (e) {
+          // ignore
+        }
+      };
     }
   }, [dispatch]);
 

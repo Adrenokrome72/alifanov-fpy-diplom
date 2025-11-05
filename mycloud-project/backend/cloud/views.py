@@ -13,9 +13,11 @@ from django.http import FileResponse, Http404, StreamingHttpResponse, JsonRespon
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import login as django_login, logout as django_logout, get_user_model
 from django.db import transaction
+from django.db.models import Sum
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.conf import settings
 
-from .models import Folder, UserFile
+from .models import Folder, UserFile, UserProfile
 from .serializers import (
     FolderSerializer,
     UserFileSerializer,
@@ -342,9 +344,14 @@ class UserFileViewSet(viewsets.ModelViewSet):
 
 class AdminUserViewSet(viewsets.ViewSet):
     """
-    Admin API для управления пользователями.
+    Админ-роуты для управления пользователями:
+      - list / retrieve
+      - set_quota (POST) - устанавливает квоту в байтах (создаёт профиль, если его нет)
+      - set_admin (POST)
+      - toggle_active (POST)
+      - destroy (DELETE) с опцией purge=true чтобы удалить и файлы
     """
-    permission_classes = [IsAdminUser]
+    permission_classes = [permissions.IsAdminUser]
 
     def list(self, request):
         qs = User.objects.all().order_by("id")
@@ -358,16 +365,28 @@ class AdminUserViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["post"])
     def set_quota(self, request, pk=None):
+        """
+        Устанавливает quota (в байтах) для пользователя.
+        Если профиль отсутствует, создаём его с дефолтной квотой.
+        Ожидается: request.data['quota'] — целое число (байты).
+        """
         user = get_object_or_404(User, pk=pk)
+
+        # Создаём профиль при отсутствии (устойчивость к пользователям, созданным до сигналов)
         profile = getattr(user, "profile", None)
         if profile is None:
-            return Response({"detail": "User profile not found"}, status=status.HTTP_400_BAD_REQUEST)
+            profile = UserProfile.objects.create(user=user, quota=getattr(settings, "USER_DEFAULT_QUOTA", None))
+
+        q = request.data.get("quota")
+        # Allow human-friendly strings passed from frontend as well
+        # but here backend expects integer bytes; frontend is already converting.
         try:
-            quota = int(request.data.get("quota"))
+            quota = int(q)
             if quota < 0:
                 raise ValueError()
         except Exception:
-            return Response({"detail": "Invalid quota"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Invalid quota (expect integer bytes)"}, status=status.HTTP_400_BAD_REQUEST)
+
         profile.quota = quota
         profile.save(update_fields=["quota"])
         return Response({"detail": "quota updated", "quota": profile.quota}, status=status.HTTP_200_OK)
@@ -426,7 +445,7 @@ def csrf_token_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated])
 def current_user_view(request):
     """
     Возвращает информацию о текущем пользователе:

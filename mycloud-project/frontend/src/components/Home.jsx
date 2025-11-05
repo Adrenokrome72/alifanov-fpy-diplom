@@ -4,48 +4,54 @@ import { Link } from "react-router-dom";
 import { useSelector } from "react-redux";
 import formatBytes from "../utils/formatBytes";
 
+const DEFAULT_QUOTA = 10 * 1024 * 1024 * 1024; // 10 GB
+
 export default function Home() {
-  const user = useSelector((s) => s.auth.user);
+  const user = useSelector(s => s.auth.user);
   const profile = user?.profile ?? null;
+  const used = profile?.used_bytes ?? 0;
+  const quotaRaw = profile?.quota ?? null;
+  const quota = quotaRaw !== null ? quotaRaw : DEFAULT_QUOTA;
+  const remaining = Math.max(0, quota - used);
+  const percentUsed = quota ? Math.round((used / quota) * 100) : null;
 
   return (
     <div className="container mx-auto p-6">
-      <div className="bg-white p-6 rounded shadow">
-        <h1 className="text-3xl font-bold">MyCloud — личное облачное хранилище</h1>
-        <p className="mt-3 text-gray-700">
-          Храните файлы, создавайте папки, делитесь контентом и управляйте доступом.
-          Проект реализован как учебная демонстрация fullstack-навыков: Django + DRF на
-          бэкенде и React + Redux на фронтенде.
-        </p>
+      <div className="card">
+        <h1 className="font-bold text-2xl">Добро пожаловать в MyCloud</h1>
+        <p className="text-gray-600 mt-2">Простое и удобное облачное хранилище для учебного проекта.</p>
 
-        <div className="mt-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex gap-2">
-            <Link to="/files" className="px-4 py-2 bg-sky-600 text-white rounded">Перейти к файлам</Link>
-            {!user && <Link to="/register" className="px-4 py-2 border rounded">Регистрация</Link>}
-            {!user && <Link to="/login" className="px-4 py-2 border rounded">Вход</Link>}
+        <div style={{marginTop:18, display:"flex", justifyContent:"space-between", alignItems:"center", gap:16}}>
+          <div style={{flex:1}}>
+            <Link to="/files" className="btn btn-primary">Открыть файловый менеджер</Link>
           </div>
 
-          {user && (
-            <div className="text-sm text-gray-600">
-              Вошёл: <strong>{user.username}</strong>
-              {profile && (
-                <span className="ml-4">Использовано: {formatBytes(profile.used_bytes ?? 0)} / {profile.quota ? formatBytes(profile.quota) : "не установлено"}</span>
-              )}
+          <div style={{width:360}}>
+            <div className="text-sm text-gray-600">Место</div>
+            <div style={{marginTop:6}}>
+              <div style={{height:12, background:"#f1f5f9", borderRadius:8, overflow:"hidden"}}>
+                <div style={{
+                  height:"100%",
+                  width: `${Math.min(100, Math.round((used/quota)*100))}%`,
+                  background: `linear-gradient(90deg,#06b6d4,#10b981)`
+                }} />
+              </div>
+              <div className="text-xs text-gray-500 mt-2">
+                { `${formatBytes(remaining)} свободно из ${formatBytes(quota)} (${percentUsed}% занято)` }
+              </div>
             </div>
-          )}
+          </div>
         </div>
 
-        <hr className="my-6" />
+        <hr className="mt-6 mb-4" />
 
-        <section>
-          <h2 className="text-xl font-semibold">Короткое руководство</h2>
-          <ul className="list-disc ml-5 mt-2 text-gray-700 space-y-1">
-            <li>Загрузите файлы на страницу «Files» — можно указывать комментарий и папку.</li>
-            <li>Создавайте папки и перемещайте файлы между ними.</li>
-            <li>Сгенерируйте внешнюю ссылку для скачивания — её можно дать неавторизованным пользователям.</li>
-            <li>Если вы администратор — откройте панель «Admin» для управления пользователями и квотами.</li>
+        <div className="text-gray-700">
+          <h3 className="font-semibold">Кратко</h3>
+          <ul className="text-sm text-gray-600 mt-2">
+            <li>Загружайте файлы, создавайте папки и делитесь ссылками.</li>
+            <li>Администратор может управлять пользователями и квотами.</li>
           </ul>
-        </section>
+        </div>
       </div>
     </div>
   );

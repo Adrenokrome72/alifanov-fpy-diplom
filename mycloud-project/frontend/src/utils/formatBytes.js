@@ -7,5 +7,6 @@ export default function formatBytes(bytes) {
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   const i = Math.floor(Math.log(b) / Math.log(1024));
   const val = b / Math.pow(1024, i);
-  return `${val.toFixed(val < 10 && i > 0 ? 2 : 1)} ${units[i]}`;
+  const decimals = val < 10 && i > 0 ? 2 : 1;
+  return `${val.toFixed(decimals)} ${units[i]}`;
 }
