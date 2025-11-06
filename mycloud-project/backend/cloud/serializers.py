@@ -1,4 +1,3 @@
-# backend/cloud/serializers.py
 import re
 from django.contrib.auth import get_user_model, authenticate
 from django.core.validators import validate_email
@@ -45,7 +44,6 @@ class RegistrationSerializer(serializers.Serializer):
         password = validated_data["password"]
         full_name = validated_data.get("full_name", "")
 
-        # Use create_user with password to ensure proper hashing and signals
         user = User.objects.create_user(username=username, email=email, password=password)
 
         # profile is created by signal; update full_name if profile exists
@@ -54,7 +52,6 @@ class RegistrationSerializer(serializers.Serializer):
             profile.full_name = full_name
             profile.save(update_fields=["full_name"])
         else:
-            # Fallback: create profile if signal didn't (defensive)
             UserProfile.objects.create(user=user, full_name=full_name)
         return user
 
@@ -71,51 +68,124 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("id", "username", "first_name", "last_name", "email")
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    used_bytes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserProfile
+        fields = ("id", "quota", "used_bytes", "full_name")
+
+    def get_used_bytes(self, obj):
+        try:
+            return obj.get_used_bytes()
+        except Exception:
+            try:
+                ag = obj.user.files.aggregate(total=Sum("size"))
+                return int(ag["total"] or 0)
+            except Exception:
+                return 0
+
+
 class FolderSerializer(serializers.ModelSerializer):
+    owner = UserSerializer(read_only=True)
+    owner_username = serializers.SerializerMethodField()
+    owner_full_name = serializers.SerializerMethodField()
+    files_count = serializers.SerializerMethodField()
+    children_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Folder
-        fields = ["id", "owner", "name", "parent", "created_at"]
-        read_only_fields = ["id", "owner", "created_at"]
+        fields = (
+            "id",
+            "name",
+            "parent",
+            "owner",
+            "owner_username",
+            "owner_full_name",
+            "created_at",
+            "share_token",
+            "files_count",
+            "children_count",
+        )
+
+    def get_owner_username(self, obj):
+        return obj.owner.username if obj.owner else None
+
+    def get_owner_full_name(self, obj):
+        try:
+            profile = getattr(obj.owner, "profile", None)
+            if profile and profile.full_name:
+                return profile.full_name
+        except Exception:
+            pass
+        return getattr(obj.owner, "first_name", None) or getattr(obj.owner, "username", None)
+
+    def get_files_count(self, obj):
+        try:
+            return obj.files.count()
+        except Exception:
+            return 0
+
+    def get_children_count(self, obj):
+        try:
+            return obj.children.count()
+        except Exception:
+            return 0
 
 
 class UserFileSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(required=True)
-    download_url = serializers.SerializerMethodField(read_only=True)
-    share_url = serializers.SerializerMethodField(read_only=True)
-    original_name = serializers.CharField(required=False, allow_blank=True)
+    owner = UserSerializer(read_only=True)
+    owner_username = serializers.SerializerMethodField()
+    owner_full_name = serializers.SerializerMethodField()
+    downloads_count = serializers.SerializerMethodField()
 
     class Meta:
         model = UserFile
-        fields = [
+        fields = (
             "id",
-            "owner",
-            "folder",
             "original_name",
-            "file",
+            "comment",
             "size",
             "uploaded_at",
             "last_downloaded_at",
-            "comment",
-            "is_shared",
+            "downloads_count",
             "share_token",
-            "download_url",
-            "share_url",
-        ]
-        read_only_fields = ["id", "owner", "size", "uploaded_at", "last_downloaded_at", "share_token", "download_url", "share_url"]
+            "owner",
+            "owner_username",
+            "owner_full_name",
+            "folder",
+            "file",
+        )
+        read_only_fields = ("id", "uploaded_at", "last_downloaded_at", "downloads_count", "share_token", "owner")
 
-    def get_download_url(self, obj):
-        request = self.context.get("request")
-        if not request:
-            return None
-        return request.build_absolute_uri(f"/api/files/{obj.pk}/download/")
+    def get_owner_username(self, obj):
+        return obj.owner.username if obj.owner else None
 
-    def get_share_url(self, obj):
-        request = self.context.get("request")
-        if not request:
-            return None
-        if obj.is_shared and obj.share_token:
-            return request.build_absolute_uri(f"/api/external/download/{obj.share_token}/")
-        return None
+    def get_owner_full_name(self, obj):
+        try:
+            profile = getattr(obj.owner, "profile", None)
+            if profile and profile.full_name:
+                return profile.full_name
+        except Exception:
+            pass
+        name = ""
+        if getattr(obj.owner, "first_name", None):
+            name = obj.owner.first_name
+        else:
+            name = obj.owner.username if obj.owner else None
+        return name
+
+    def get_downloads_count(self, obj):
+        try:
+            return int(obj.download_count or 0)
+        except Exception:
+            return 0
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
@@ -123,6 +193,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
     quota = serializers.SerializerMethodField()
     files_count = serializers.SerializerMethodField()
     files_size = serializers.SerializerMethodField()
+    storage_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -136,8 +207,9 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "quota",
             "files_count",
             "files_size",
+            "storage_url",
         ]
-        read_only_fields = ["id", "username", "email", "files_count", "files_size", "full_name"]
+        read_only_fields = ["id", "username", "email", "files_count", "files_size", "full_name", "storage_url"]
 
     def get_full_name(self, obj):
         profile = getattr(obj, "profile", None)
@@ -148,8 +220,17 @@ class AdminUserSerializer(serializers.ModelSerializer):
         return profile.quota if profile else None
 
     def get_files_count(self, obj):
-        return obj.files.count()
+        try:
+            return obj.files.count()
+        except Exception:
+            return 0
 
     def get_files_size(self, obj):
         ag = obj.files.aggregate(total=Sum("size"))
         return int(ag["total"] or 0)
+
+    def get_storage_url(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return None
+        return request.build_absolute_uri(f"/api/admin-users/{obj.pk}/storage/")

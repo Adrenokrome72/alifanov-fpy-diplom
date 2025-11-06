@@ -1,21 +1,23 @@
-# backend/cloud/views.py
 import os
 import tempfile
 import zipfile
 import secrets
+
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from django.http import FileResponse, Http404, StreamingHttpResponse, JsonResponse
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import login as django_login, logout as django_logout, get_user_model
 from django.db import transaction
 from django.db.models import Sum
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.conf import settings
+from django.utils import timezone
+from django.urls import reverse
 
 from .models import Folder, UserFile, UserProfile
 from .serializers import (
@@ -72,10 +74,13 @@ class LogoutView(APIView):
 class FolderViewSet(viewsets.ModelViewSet):
     queryset = Folder.objects.all()
     serializer_class = FolderSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
+        owner_q = self.request.query_params.get("owner")
+        if owner_q and user.is_staff:
+            return Folder.objects.filter(owner_id=owner_q)
         if user.is_staff:
             return Folder.objects.all()
         return Folder.objects.filter(owner=user)
@@ -83,274 +88,253 @@ class FolderViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
 
-    # helper: collect subtree folders (ids)
-    def _collect_subtree(self, folder):
-        ids = []
-        queue = [folder]
-        while queue:
-            node = queue.pop(0)
-            ids.append(node.pk)
-            children = list(node.children.all())
-            queue.extend(children)
-        return ids
+    @action(detail=True, methods=["post"])
+    def share(self, request, pk=None):
+        folder = self.get_object()
+        if not (request.user.is_staff or folder.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        if not folder.share_token:
+            folder.share_token = secrets.token_urlsafe(16)
+            folder.save(update_fields=["share_token"])
+        share_url = request.build_absolute_uri(reverse("external-download", args=[folder.share_token]))
+        return Response({"share_url": share_url})
 
-    def _is_descendant(self, candidate, root):
-        node = candidate
-        while node:
-            if node.pk == root.pk:
-                return True
-            node = node.parent
-        return False
+    @action(detail=True, methods=["get"])
+    def download_zip(self, request, pk=None):
+        folder = self.get_object()
+        if not (request.user.is_staff or folder.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        # collect all files inside folder (recursive)
+        files_qs = UserFile.objects.filter(folder__in=self._collect_folder_and_children_ids(folder))
+        # create temp zip
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        try:
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in files_qs:
+                    try:
+                        path = f.file.path
+                        arcname = f.original_name
+                        zf.write(path, arcname=arcname)
+                    except Exception:
+                        continue
+            tmp.flush()
+            tmp.close()
+            resp = FileResponse(open(tmp.name, "rb"), as_attachment=True, filename=f"{folder.name}.zip")
+            return resp
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+
+    def _collect_folder_and_children_ids(self, folder):
+        # BFS or DFS to collect child folder ids
+        ids = [folder.id]
+        stack = [folder]
+        while stack:
+            cur = stack.pop()
+            children = Folder.objects.filter(parent=cur)
+            for c in children:
+                ids.append(c.id)
+                stack.append(c)
+        return ids
 
     @action(detail=True, methods=["post"])
     def rename(self, request, pk=None):
-        folder = get_object_or_404(Folder, pk=pk)
+        folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-        new_name = request.data.get("name")
-        if not new_name:
-            return Response({"detail": "Missing name"}, status=status.HTTP_400_BAD_REQUEST)
-        if Folder.objects.filter(owner=folder.owner, parent=folder.parent, name=new_name).exclude(pk=folder.pk).exists():
-            return Response({"detail": "Folder with this name already exists in target parent"}, status=status.HTTP_400_BAD_REQUEST)
-        folder.name = new_name
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        name = request.data.get("name")
+        if not name:
+            return Response({"detail": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+        folder.name = name
         folder.save(update_fields=["name"])
-        return Response({"detail": "renamed", "name": folder.name}, status=status.HTTP_200_OK)
+        return Response(self.get_serializer(folder).data)
 
     @action(detail=True, methods=["post"])
     def move(self, request, pk=None):
-        folder = get_object_or_404(Folder, pk=pk)
-        if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-
-        parent_id = request.data.get("parent", None)
-        if parent_id in ("", None):
-            folder.parent = None
-            folder.save(update_fields=["parent"])
-            return Response({"detail": "moved", "parent": None}, status=status.HTTP_200_OK)
-
-        try:
-            parent = Folder.objects.get(pk=int(parent_id))
-        except Exception:
-            return Response({"detail": "Parent folder not found"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not (request.user.is_staff or parent.owner == folder.owner):
-            return Response({"detail": "Parent folder belongs to different owner"}, status=status.HTTP_403_FORBIDDEN)
-
-        if parent.pk == folder.pk:
-            return Response({"detail": "Cannot move folder into itself"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if self._is_descendant(parent, folder):
-            return Response({"detail": "Cannot move folder into its descendant"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if Folder.objects.filter(owner=folder.owner, parent=parent, name=folder.name).exclude(pk=folder.pk).exists():
-            return Response({"detail": "Folder with same name exists in target parent"}, status=status.HTTP_400_BAD_REQUEST)
-
-        folder.parent = parent
-        folder.save(update_fields=["parent"])
-        return Response({"detail": "moved", "parent": parent.pk}, status=status.HTTP_200_OK)
-
-    def _delete_subtree_files(self, folder):
-        folder_ids = self._collect_subtree(folder)
-        files_qs = UserFile.objects.filter(folder_id__in=folder_ids)
-        for f in list(files_qs):
-            f.delete()
-
-    @action(detail=True, methods=["post"])
-    def purge(self, request, pk=None):
-        folder = get_object_or_404(Folder, pk=pk)
-        if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-        folder_ids = self._collect_subtree(folder)
-        with transaction.atomic():
-            for fid in folder_ids:
-                files = UserFile.objects.filter(folder_id=fid)
-                for f in list(files):
-                    f.delete()
-            Folder.objects.filter(pk__in=folder_ids).delete()
-        return Response({"detail": "folder and contents deleted"}, status=status.HTTP_200_OK)
-
-    def destroy(self, request, *args, **kwargs):
         folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-        folder_ids = self._collect_subtree(folder)
-        with transaction.atomic():
-            for fid in folder_ids:
-                files = UserFile.objects.filter(folder_id=fid)
-                for f in list(files):
-                    f.delete()
-            Folder.objects.filter(pk__in=folder_ids).delete()
-        return Response({"detail": "deleted"}, status=status.HTTP_200_OK)
-
-    def _compute_relative_arcname(self, file_obj, root_folder):
-        parts = []
-        node = file_obj.folder
-        while node and node.pk != root_folder.pk:
-            parts.append(node.name)
-            node = node.parent
-        parts.reverse()
-        if parts:
-            rel_path = "/".join(parts)
-            arc = f"{root_folder.name}/{rel_path}/{file_obj.original_name}"
-        else:
-            arc = f"{root_folder.name}/{file_obj.original_name}"
-        return arc
-
-    @action(detail=True, methods=["get"], url_path="download_zip")
-    def download_zip(self, request, pk=None):
-        folder = get_object_or_404(Folder, pk=pk)
-        if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-
-        subtree_ids = self._collect_subtree(folder)
-        files_qs = UserFile.objects.filter(folder_id__in=subtree_ids)
-
-        tmp = tempfile.NamedTemporaryFile(prefix="folderzip_", suffix=".zip", delete=False)
-        tmp_name = tmp.name
-        tmp.close()
-
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        parent_id = request.data.get("parent")
+        if parent_id in (None, "", "null"):
+            folder.parent = None
+            folder.save(update_fields=["parent"])
+            return Response(self.get_serializer(folder).data)
         try:
-            with zipfile.ZipFile(tmp_name, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for f in files_qs:
-                    fpath = f.file.path
-                    if not os.path.exists(fpath):
-                        continue
-                    arcname = self._compute_relative_arcname(f, folder)
-                    zf.write(fpath, arcname=arcname)
+            p = Folder.objects.get(pk=parent_id)
+        except Folder.DoesNotExist:
+            return Response({"detail": "Target parent not found"}, status=status.HTTP_400_BAD_REQUEST)
+        if not (request.user.is_staff or p.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        folder.parent = p
+        folder.save(update_fields=["parent"])
+        return Response(self.get_serializer(folder).data)
 
-            def file_iterator(path, chunk_size=8192):
-                try:
-                    with open(path, "rb") as fh:
-                        while True:
-                            chunk = fh.read(chunk_size)
-                            if not chunk:
-                                break
-                            yield chunk
-                finally:
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
-
-            resp = StreamingHttpResponse(file_iterator(tmp_name), content_type="application/zip")
-            resp["Content-Disposition"] = f'attachment; filename="{folder.name}.zip"'
-            return resp
-        except Exception as exc:
-            try:
-                os.remove(tmp_name)
-            except Exception:
-                pass
-            return Response({"detail": "Error creating zip", "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    @action(detail=True, methods=["delete"])
+    def purge(self, request, pk=None):
+        folder = self.get_object()
+        if not (request.user.is_staff or folder.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        # delete files and subfolders recursively
+        ids = self._collect_folder_and_children_ids(folder)
+        files = UserFile.objects.filter(folder_id__in=ids)
+        total_size = files.aggregate(sum=Sum("size"))["sum"] or 0
+        files.delete()
+        Folder.objects.filter(id__in=ids).delete()
+        # Не пытаемся присваивать profile.used_bytes — используем вычисление при запросе
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class UserFileViewSet(viewsets.ModelViewSet):
     queryset = UserFile.objects.all()
     serializer_class = UserFileSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff and self.request.query_params.get("owner"):
-            owner_id = self.request.query_params.get("owner")
-            return UserFile.objects.filter(owner_id=owner_id)
+        # admin may pass owner param to view other user's files
+        owner_q = self.request.query_params.get("owner")
+        if owner_q and user.is_staff:
+            return UserFile.objects.filter(owner_id=owner_q)
         if user.is_staff:
             return UserFile.objects.all()
         return UserFile.objects.filter(owner=user)
 
+    def perform_create(self, serializer):
+        # ensure owner is request.user
+        serializer.save(owner=self.request.user)
+
     def create(self, request, *args, **kwargs):
+        # robust creation for multipart
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
-            return Response({"file": ["No file provided."]}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"file": ["No file provided"]}, status=status.HTTP_400_BAD_REQUEST)
 
+        folder_id = request.data.get("folder") or None
+        folder = None
+        if folder_id:
+            try:
+                folder = Folder.objects.get(pk=folder_id)
+            except Folder.DoesNotExist:
+                return Response({"detail": "Target folder not found"}, status=status.HTTP_400_BAD_REQUEST)
+            if not (request.user.is_staff or folder.owner == request.user):
+                return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        comment = request.data.get("comment", "")
+        original_name = request.data.get("original_name", uploaded_file.name)
+
+        # quota check
         profile = getattr(request.user, "profile", None)
-        if profile:
-            size = getattr(uploaded_file, "size", None)
-            if size is None:
-                try:
-                    uploaded_file.seek(0, os.SEEK_END)
-                    size = uploaded_file.tell()
-                    uploaded_file.seek(0)
-                except Exception:
-                    size = None
-            if size is not None:
-                if profile.remaining_bytes() < size:
-                    return Response({"detail": "Quota exceeded. Not enough space."}, status=status.HTTP_400_BAD_REQUEST)
+        size = getattr(uploaded_file, "size", None)
+        if profile and size is not None:
+            used = profile.get_used_bytes()
+            if profile.quota is not None and (used + size > profile.quota):
+                return Response({"detail": "Quota exceeded"}, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = self.get_serializer(data=request.data, context={"request": request})
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        instance = serializer.save(owner=request.user)
-        out_serializer = self.get_serializer(instance, context={"request": request})
-        headers = self.get_success_headers(out_serializer.data)
-        return Response(out_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        # Create object and save file
+        userfile = UserFile(
+            owner=request.user,
+            folder=folder,
+            original_name=original_name,
+            comment=comment,
+            size=getattr(uploaded_file, "size", 0),
+        )
+        userfile.file.save(uploaded_file.name, uploaded_file, save=False)
+        userfile.save()
+
+        serializer = self.get_serializer(userfile, context={"request": request})
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=["post"])
+    def share(self, request, pk=None):
+        """Создаёт или возвращает share token для файла"""
+        obj = self.get_object()
+        if not (request.user.is_staff or obj.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        if not obj.share_token:
+            obj.share_token = secrets.token_urlsafe(16)
+            obj.save(update_fields=["share_token"])
+        share_url = request.build_absolute_uri(reverse("external-download", args=[obj.share_token]))
+        return Response({"share_url": share_url})
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        obj = self.get_object()
+        if not (request.user.is_staff or obj.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            # increment download_count and update last_downloaded_at
+            try:
+                obj.download_count = (obj.download_count or 0) + 1
+                obj.last_downloaded_at = timezone.now()
+                obj.save(update_fields=["download_count", "last_downloaded_at"])
+            except Exception:
+                pass
+            return FileResponse(obj.file.open("rb"), as_attachment=True, filename=obj.original_name)
+        except Exception:
+            raise Http404
+
+    @action(detail=True, methods=["post"])
+    def rename(self, request, pk=None):
+        obj = self.get_object()
+        if not (request.user.is_staff or obj.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        new_name = request.data.get("name")
+        if not new_name:
+            return Response({"detail": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+        # ensure extension preserved: extract ext from original_name
+        if "." in obj.original_name:
+            ext = obj.original_name.split(".")[-1]
+            # if user provided extension, strip it
+            if "." in new_name:
+                new_name = new_name.rsplit(".", 1)[0]
+            obj.original_name = f"{new_name}.{ext}"
+        else:
+            # no extension present
+            if "." in new_name:
+                new_name = new_name.rsplit(".", 1)[0]
+            obj.original_name = new_name
+        obj.save(update_fields=["original_name"])
+        return Response(self.get_serializer(obj).data)
 
     @action(detail=True, methods=["post"])
     def move(self, request, pk=None):
-        file_obj = get_object_or_404(UserFile, pk=pk)
-        if not (request.user.is_staff or file_obj.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-
-        folder_id = request.data.get("folder", None)
-        if folder_id in ("", None):
-            file_obj.folder = None
-            file_obj.save(update_fields=["folder"])
-            return Response({"detail": "moved", "folder": None}, status=status.HTTP_200_OK)
-
+        obj = self.get_object()
+        if not (request.user.is_staff or obj.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        folder_id = request.data.get("folder")
+        if folder_id in (None, "", "null"):
+            obj.folder = None
+            obj.save(update_fields=["folder"])
+            return Response(self.get_serializer(obj).data)
         try:
-            folder = Folder.objects.get(pk=int(folder_id))
-        except Exception:
+            target = Folder.objects.get(pk=folder_id)
+        except Folder.DoesNotExist:
             return Response({"detail": "Target folder not found"}, status=status.HTTP_400_BAD_REQUEST)
+        if not (request.user.is_staff or target.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        obj.folder = target
+        obj.save(update_fields=["folder"])
+        return Response(self.get_serializer(obj).data)
 
-        if not (request.user.is_staff or folder.owner == file_obj.owner):
-            return Response({"detail": "Target folder belongs to different owner"}, status=status.HTTP_403_FORBIDDEN)
-
-        file_obj.folder = folder
-        file_obj.save(update_fields=["folder"])
-        return Response({"detail": "moved", "folder": folder.pk}, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=["get"], url_path="download")
-    def download(self, request, pk=None):
-        file_obj = get_object_or_404(UserFile, pk=pk)
-        if not (request.user.is_staff or file_obj.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-        fpath = file_obj.file.path
-        if not os.path.exists(fpath):
-            raise Http404("Файл не найден на сервере.")
-        file_obj.mark_downloaded()
-        return FileResponse(open(fpath, "rb"), as_attachment=True, filename=file_obj.original_name)
-
-    @action(detail=True, methods=["post"], url_path="share")
-    def share(self, request, pk=None):
-        file_obj = get_object_or_404(UserFile, pk=pk)
-        if not (request.user.is_staff or file_obj.owner == request.user):
-            return Response({"detail": "Нет прав доступа"}, status=status.HTTP_403_FORBIDDEN)
-        action_param = request.data.get("action", "generate")
-        if action_param == "generate":
-            token = file_obj.generate_share_token()
-            return Response({
-                "share_token": token,
-                "share_url": request.build_absolute_uri(f"/api/external/download/{token}/")
-            }, status=status.HTTP_200_OK)
-        elif action_param == "revoke":
-            file_obj.revoke_share()
-            return Response({"detail": "share revoked"}, status=status.HTTP_200_OK)
-        else:
-            return Response({"detail": "unknown action"}, status=status.HTTP_400_BAD_REQUEST)
-
-    def partial_update(self, request, *args, **kwargs):
-        return super().partial_update(request, *args, **kwargs)
+    @action(detail=True, methods=["delete"])
+    def purge(self, request, pk=None):
+        """Удаление файла"""
+        obj = self.get_object()
+        if not (request.user.is_staff or obj.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        size = obj.size or 0
+        owner_profile = getattr(obj.owner, "profile", None)
+        obj.file.delete(save=False)
+        obj.delete()
+        # не трогаем used_bytes как поле — профиль будет отражать актуальное значение через агрегацию
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AdminUserViewSet(viewsets.ViewSet):
-    """
-    Админ-роуты для управления пользователями:
-      - list / retrieve
-      - set_quota (POST) - устанавливает квоту в байтах (создаёт профиль, если его нет)
-      - set_admin (POST)
-      - toggle_active (POST)
-      - destroy (DELETE) с опцией purge=true чтобы удалить и файлы
-    """
     permission_classes = [permissions.IsAdminUser]
 
     def list(self, request):
@@ -365,21 +349,13 @@ class AdminUserViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["post"])
     def set_quota(self, request, pk=None):
-        """
-        Устанавливает quota (в байтах) для пользователя.
-        Если профиль отсутствует, создаём его с дефолтной квотой.
-        Ожидается: request.data['quota'] — целое число (байты).
-        """
         user = get_object_or_404(User, pk=pk)
 
-        # Создаём профиль при отсутствии (устойчивость к пользователям, созданным до сигналов)
         profile = getattr(user, "profile", None)
         if profile is None:
-            profile = UserProfile.objects.create(user=user, quota=getattr(settings, "USER_DEFAULT_QUOTA", None))
+            profile = UserProfile.objects.create(user=user, quota=getattr(settings, "USER_DEFAULT_QUOTA", 0))
 
         q = request.data.get("quota")
-        # Allow human-friendly strings passed from frontend as well
-        # but here backend expects integer bytes; frontend is already converting.
         try:
             quota = int(q)
             if quota < 0:
@@ -413,6 +389,38 @@ class AdminUserViewSet(viewsets.ViewSet):
         user.save(update_fields=["is_active"])
         return Response({"detail": "is_active set", "is_active": user.is_active}, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["get"])
+    def storage(self, request, pk=None):
+        """
+        Returns top-level folders and top-level files for the given user,
+        as well as used_bytes and quota. Admin can use this to navigate to user's storage.
+        """
+        user = get_object_or_404(User, pk=pk)
+        # top-level folders (parent IS NULL)
+        folders = Folder.objects.filter(owner=user, parent__isnull=True).order_by("name")
+        files = UserFile.objects.filter(owner=user, folder__isnull=True).order_by("-uploaded_at")
+
+        folder_ser = FolderSerializer(folders, many=True, context={"request": request})
+        file_ser = UserFileSerializer(files, many=True, context={"request": request})
+
+        profile = getattr(user, "profile", None)
+        used_bytes = 0
+        try:
+            used_bytes = int(user.files.aggregate(total=Sum("size"))["total"] or 0)
+        except Exception:
+            used_bytes = 0
+        if profile:
+            quota = profile.quota
+        else:
+            quota = getattr(settings, "USER_DEFAULT_QUOTA", 10 * 1024 * 1024 * 1024)
+
+        return Response({
+            "folders": folder_ser.data,
+            "files": file_ser.data,
+            "used_bytes": used_bytes,
+            "quota": quota,
+        }, status=status.HTTP_200_OK)
+
     def destroy(self, request, pk=None):
         user = get_object_or_404(User, pk=pk)
         purge = request.query_params.get("purge", "false").lower() in ("1", "true", "yes")
@@ -428,14 +436,63 @@ class AdminUserViewSet(viewsets.ViewSet):
 
 
 @api_view(["GET"])
-@permission_classes([permissions.AllowAny])
+@permission_classes([AllowAny])
 def external_download(request, token):
-    file_obj = get_object_or_404(UserFile, share_token=token, is_shared=True)
-    fpath = file_obj.file.path
-    if not os.path.exists(fpath):
-        raise Http404("Файл не найден")
-    file_obj.mark_downloaded()
-    return FileResponse(open(fpath, "rb"), as_attachment=True, filename=file_obj.original_name)
+    """
+    Публичный эндпоинт: ищем сначала файл по token, затем папку.
+    Если найден файл — отдаём его (FileResponse) и увеличиваем счётчик.
+    Если найдена папка — создаём zip и отдаём.
+    """
+    try:
+        f = UserFile.objects.filter(share_token=token).first()
+        if f:
+            try:
+                f.download_count = (f.download_count or 0) + 1
+                f.last_downloaded_at = timezone.now()
+                f.save(update_fields=["download_count", "last_downloaded_at"])
+            except Exception:
+                pass
+            try:
+                return FileResponse(f.file.open("rb"), as_attachment=True, filename=f.original_name)
+            except Exception:
+                raise Http404
+
+        folder = Folder.objects.filter(share_token=token).first()
+        if folder:
+            # collect files recursively
+            def collect_ids(folder):
+                ids = [folder.id]
+                stack = [folder]
+                while stack:
+                    cur = stack.pop()
+                    children = Folder.objects.filter(parent=cur)
+                    for c in children:
+                        ids.append(c.id)
+                        stack.append(c)
+                return ids
+            ids = collect_ids(folder)
+            files_qs = UserFile.objects.filter(folder_id__in=ids)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            try:
+                with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for ff in files_qs:
+                        try:
+                            zf.write(ff.file.path, arcname=ff.original_name)
+                        except Exception:
+                            continue
+                tmp.flush()
+                tmp.close()
+                return FileResponse(open(tmp.name, "rb"), as_attachment=True, filename=f"{folder.name}.zip")
+            finally:
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    return Response({"detail": "Token not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 @ensure_csrf_cookie
@@ -473,7 +530,6 @@ def current_user_view(request):
     if profile and getattr(profile, "full_name", ""):
         full_name = profile.full_name
     else:
-        # try common user fields
         full_name = getattr(user, "full_name", "") or getattr(user, "first_name", "") or ""
 
     data = {

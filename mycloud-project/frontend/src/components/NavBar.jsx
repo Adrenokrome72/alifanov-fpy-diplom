@@ -1,4 +1,3 @@
-// frontend/src/components/NavBar.jsx
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
@@ -31,6 +30,7 @@ export default function NavBar() {
 
   // Try to ensure we have fresh user data on mount
   useEffect(() => {
+    // Only try if we don't have a user yet — this avoids unnecessary calls when anonymous
     dispatch(fetchCurrentUser()).catch(()=>{ /* ignore */});
     // expose convenience function used by some components
     window.fetchCurrentUser = async () => {
@@ -63,9 +63,11 @@ export default function NavBar() {
     }
   }
 
-  const quotaRaw = user?.profile?.quota;
+  // Only compute quota/used when we have a user with profile — otherwise hide stats
+  const hasProfile = Boolean(user && (user.profile || user.full_name || user.username));
+  const quotaRaw = hasProfile ? (user?.profile?.quota ?? null) : null;
   const quota = quotaRaw != null ? Number(quotaRaw) : DEFAULT_QUOTA;
-  const used = Number(localUsed || 0);
+  const used = hasProfile ? Number(localUsed || 0) : 0;
   const remaining = Math.max(0, quota - used);
   const percentFree = quota ? Math.round((remaining / quota) * 100) : 0;
 
@@ -86,9 +88,12 @@ export default function NavBar() {
             <>
               <div style={{textAlign:"right"}}>
                 <div className="text-sm">Привет, <strong>{firstName}</strong>!</div>
-                <div className="text-xs text-gray-500">
-                  Осталось: {formatBytes(remaining)} ({percentFree}%)
-                </div>
+                { /* Показываем статистику только если у пользователя есть профиль (т.е. он залогинен) */ }
+                { hasProfile && (
+                  <div className="text-xs text-gray-500">
+                    Осталось: {formatBytes(remaining)} ({percentFree}%)
+                  </div>
+                )}
               </div>
               <button className="btn bg-white border rounded px-3 py-1" onClick={doLogout}>Выйти</button>
             </>

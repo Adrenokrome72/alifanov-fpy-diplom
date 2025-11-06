@@ -1,70 +1,50 @@
 // frontend/src/components/AdminPanel.jsx
 import React, { useEffect, useState } from "react";
 import apiFetch from "../api";
-import formatBytes from "../utils/formatBytes";
 import { showToast } from "../utils/toast";
+import formatBytes from "../utils/formatBytes";
+import { useNavigate } from "react-router-dom";
 
 /*
-  AdminPanel: если у пользователя нет profile.used_bytes или files_count,
-  делает доп. запрос к админ-деталям /api/admin-users/{id}/ и подставляет данные.
-  Имеет локальный parseBytes для удобства (15GB / 500MB).
+ AdminPanel:
+  - list users (GET /api/admin-users/)
+  - set quota (POST /api/admin-users/{id}/set_quota/)
+  - set admin (POST /api/admin-users/{id}/set_admin/)
+  - toggle active (POST /api/admin-users/{id}/toggle_active/)
+  - delete user with purge (DELETE /api/admin-users/{id}/?purge=true) OR custom endpoint (we try delete then show)
+  - open storage: navigate to /files?owner=<id> which FileManager supports
 */
 
-function parseBytes(input) {
+function parseSizeToBytes(input) {
   if (!input && input !== 0) return null;
-  if (typeof input === "number") return input;
-  const s = String(input).trim();
-  if (s === "") return null;
-  const m = s.match(/^([\d,.]+)\s*(b|kb|mb|gb|tb)?$/i);
-  if (!m) return null;
-  let v = parseFloat(m[1].replace(",", "."));
-  const unit = (m[2] || "").toLowerCase();
-  switch (unit) {
-    case "tb": v = v * 1024 * 1024 * 1024 * 1024; break;
-    case "gb": v = v * 1024 * 1024 * 1024; break;
-    case "mb": v = v * 1024 * 1024; break;
-    case "kb": v = v * 1024; break;
-    case "b":
-    case "":
-    default: break;
-  }
-  return Math.round(v);
+  const s = String(input).trim().toUpperCase();
+  if (!s) return null;
+  // Accept formats like: 15GB, 500MB, 1024, 2.5GB, 200K, 200KB
+  const match = s.match(/^([\d,.]+)\s*(B|KB|K|MB|M|GB|G|TB|T)?$/i);
+  if (!match) return null;
+  let num = parseFloat(match[1].replace(",", "."));
+  if (Number.isNaN(num)) return null;
+  const unit = (match[2] || "B").toUpperCase();
+  const map = { B: 1, K: 1024, KB: 1024, M: 1024 ** 2, MB: 1024 ** 2, G: 1024 ** 3, GB: 1024 ** 3, T: 1024 ** 4, TB: 1024 ** 4 };
+  const factor = map[unit] || 1;
+  return Math.round(num * factor);
 }
 
 export default function AdminPanel() {
   const [users, setUsers] = useState([]);
-  const [editingQuota, setEditingQuota] = useState({});
   const [loading, setLoading] = useState(false);
+  const [editingQuotaFor, setEditingQuotaFor] = useState(null);
+  const [quotaInput, setQuotaInput] = useState("");
+  const navigate = useNavigate();
 
   const loadUsers = async () => {
     setLoading(true);
     try {
-      const res = await apiFetch("/api/admin-users/");
-      const arr = Array.isArray(res) ? res : [];
-      setUsers(arr);
-      const map = {};
-      arr.forEach(u => map[u.id] = (u.profile && u.profile.quota) ? String(u.profile.quota) : "");
-      setEditingQuota(map);
-
-      // For users missing used_bytes or files_count do extra GET
-      const need = arr.filter(u => !u.profile || (u.profile.used_bytes == null) || (u.files_count == null));
-      if (need.length) {
-        const promises = need.map(u => apiFetch(`/api/admin-users/${u.id}/`).catch(()=>null));
-        const details = await Promise.all(promises);
-        setUsers(prev => {
-          const byId = new Map(prev.map(x => [x.id, x]));
-          details.forEach(d => {
-            if (d && d.id) {
-              const prevItem = byId.get(d.id) || {};
-              byId.set(d.id, { ...prevItem, ...d });
-            }
-          });
-          return Array.from(byId.values());
-        });
-      }
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Ошибка загрузки пользователей", { type: "error" });
+      const data = await apiFetch("/api/admin-users/");
+      // expected array with fields: id, username, full_name, quota, files_size, files_count, is_staff, is_active
+      setUsers(data || []);
+    } catch (e) {
+      showToast("Ошибка загрузки списка пользователей", { type: "error" });
     } finally {
       setLoading(false);
     }
@@ -72,86 +52,116 @@ export default function AdminPanel() {
 
   useEffect(() => { loadUsers(); }, []);
 
-  const saveQuota = async (id) => {
-    const raw = editingQuota[id];
-    const parsed = parseBytes(raw);
-    if (parsed === null) {
-      showToast("Неверный формат квоты. Пример: 15GB или 500MB", { type: "error" });
-      return;
-    }
+  const openStorage = (uid) => {
+    navigate(`/files?owner=${uid}`);
+  };
+
+  const toggleAdmin = async (user) => {
     try {
-      await apiFetch(`/api/admin-users/${id}/set_quota/`, { method: "POST", body: { quota: parsed } });
-      showToast("Квота сохранена", { type: "success" });
+      await apiFetch(`/api/admin-users/${user.id}/set_admin/`, { method: "POST", body: { set_admin: !user.is_staff }});
+      showToast(user.is_staff ? "Права администратора отозваны" : "Пользователь назначен администратором", { type: "success" });
       await loadUsers();
-      if (window.fetchCurrentUser) window.fetchCurrentUser();
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Ошибка сохранения квоты", { type: "error" });
+    } catch (e) {
+      showToast("Ошибка изменения прав", { type: "error" });
     }
   };
 
-  const toggleAdmin = async (id, makeAdmin) => {
+  const toggleActive = async (user) => {
     try {
-      await apiFetch(`/api/admin-users/${id}/set_admin/`, { method: "POST", body: { is_staff: !!makeAdmin } });
-      showToast("Роль обновлена", { type: "success" });
+      await apiFetch(`/api/admin-users/${user.id}/toggle_active/`, { method: "POST" });
+      showToast(user.is_active ? "Пользователь заблокирован" : "Пользователь разблокирован", { type: "success" });
       await loadUsers();
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Ошибка обновления роли", { type: "error" });
+    } catch (e) {
+      showToast("Ошибка изменения статуса", { type: "error" });
     }
   };
 
-  const toggleActive = async (id) => {
+  const handleSetQuotaStart = (user) => {
+    setEditingQuotaFor(user.id);
+    setQuotaInput(user.quota != null ? String(user.quota) : "");
+  };
+
+  const handleSetQuotaCancel = () => {
+    setEditingQuotaFor(null);
+    setQuotaInput("");
+  };
+
+  const handleSetQuotaSave = async (user) => {
+    const bytes = parseSizeToBytes(quotaInput);
+    if (bytes === null) return showToast("Некорректный размер (пример: 15GB, 500MB)", { type: "error" });
     try {
-      await apiFetch(`/api/admin-users/${id}/toggle_active/`, { method: "POST", body: {} });
-      showToast("Статус пользователя обновлён", { type: "success" });
+      await apiFetch(`/api/admin-users/${user.id}/set_quota/`, { method: "POST", body: { quota: bytes }});
+      showToast("Квота обновлена", { type: "success" });
+      setEditingQuotaFor(null);
+      setQuotaInput("");
       await loadUsers();
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Ошибка обновления статуса", { type: "error" });
+    } catch (e) {
+      showToast("Ошибка установки квоты", { type: "error" });
     }
   };
 
-  const deleteUser = async (id) => {
-    if (!window.confirm("Удалить пользователя и его данные?")) return;
+  const handleDeleteUser = async (user) => {
+    if (!confirm(`Удалить пользователя ${user.username}? (Будут удалены все его данные)`)) return;
     try {
-      await apiFetch(`/api/admin-users/${id}/`, { method: "DELETE" });
+      await apiFetch(`/api/admin-users/${user.id}/`, { method: "DELETE", body: { purge: true }});
       showToast("Пользователь удалён", { type: "success" });
       await loadUsers();
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Ошибка удаления", { type: "error" });
+    } catch (e) {
+      showToast("Ошибка удаления пользователя", { type: "error" });
     }
   };
 
   return (
     <div className="container mx-auto p-6">
-      <div className="card">
-        <h2 className="font-semibold">Административная панель</h2>
-        <div className="text-sm text-gray-600 mt-2">Управление пользователями и квотами</div>
+      <div className="card p-4">
+        <h2 className="text-xl font-semibold mb-4">Панель администратора — Пользователи</h2>
 
         {loading ? <div>Загрузка...</div> : (
-          <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-            {users.map(u => (
-              <div key={u.id} className="admin-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 8, borderBottom: "1px solid #eee" }}>
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <div><strong>{u.username}</strong> — {u.full_name || (u.profile && u.profile.full_name) || "—"}</div>
-                  <div className="text-xs text-gray-500">
-                    Занято: {formatBytes(u.profile?.used_bytes ?? (u.used_bytes ?? 0))}
-                    {" • "}
-                    Файлов: { (u.files_count != null) ? u.files_count : (u.files_count === 0 ? 0 : (u.profile?.files_count != null ? u.profile.files_count : "—")) }
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input value={editingQuota[u.id] ?? ""} onChange={(e) => setEditingQuota(prev => ({ ...prev, [u.id]: e.target.value }))} placeholder="Например 15GB" className="border p-1 rounded" />
-                  <button className="btn" onClick={() => saveQuota(u.id)}>Сохранить</button>
-                  <button className="btn" onClick={() => toggleAdmin(u.id, !u.is_staff)}>{u.is_staff ? "Отнять права" : "Сделать админом"}</button>
-                  <button className="btn" onClick={() => toggleActive(u.id)}>{u.is_active ? "Отключить" : "Включить"}</button>
-                  <button className="btn" onClick={() => deleteUser(u.id)}>Удалить</button>
-                </div>
-              </div>
-            ))}
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%", borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{textAlign:"left", borderBottom:"1px solid #e5e7eb"}}>
+                  <th style={{padding:8}}>Логин</th>
+                  <th style={{padding:8}}>ФИО</th>
+                  <th style={{padding:8}}>Квота</th>
+                  <th style={{padding:8}}>Занято</th>
+                  <th style={{padding:8}}>Файлов</th>
+                  <th style={{padding:8}}>Статус</th>
+                  <th style={{padding:8}}>Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} style={{borderBottom:"1px solid #f3f4f6"}}>
+                    <td style={{padding:8}}>{u.username}</td>
+                    <td style={{padding:8}}>{u.full_name || "-"}</td>
+                    <td style={{padding:8}}>
+                      {editingQuotaFor === u.id ? (
+                        <div style={{display:"flex", gap:8}}>
+                          <input value={quotaInput} onChange={(e)=>setQuotaInput(e.target.value)} placeholder="15GB" className="border p-1 rounded" />
+                          <button className="btn btn-primary" onClick={()=>handleSetQuotaSave(u)}>Сохранить</button>
+                          <button className="btn" onClick={handleSetQuotaCancel}>Отмена</button>
+                        </div>
+                      ) : (
+                        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                          <div>{u.quota != null ? formatBytes(u.quota) : "не установлено"}</div>
+                          <button className="btn" onClick={()=>handleSetQuotaStart(u)}>Изменить</button>
+                        </div>
+                      )}
+                    </td>
+                    <td style={{padding:8}}>{u.files_size != null ? formatBytes(u.files_size) : "0 B"}</td>
+                    <td style={{padding:8}}>{u.files_count ?? 0}</td>
+                    <td style={{padding:8}}>{u.is_active ? "Активен" : "Заблокирован"}</td>
+                    <td style={{padding:8, display:"flex", gap:6}}>
+                      <button className="btn btn-primary" onClick={()=>openStorage(u.id)}>Открыть хранилище</button>
+                      <button className="btn" onClick={()=>toggleAdmin(u)}>{u.is_staff ? "Revoke Admin" : "Make Admin"}</button>
+                      <button className="btn" onClick={()=>toggleActive(u)}>{u.is_active ? "Блокировать" : "Разблокировать"}</button>
+                      <button className="btn btn-danger" onClick={()=>handleDeleteUser(u)}>Удалить</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

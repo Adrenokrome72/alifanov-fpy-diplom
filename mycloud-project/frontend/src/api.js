@@ -1,62 +1,95 @@
 // frontend/src/api.js
-// Унифицированная обёртка для fetch с поддержкой CSRF, FormData и дружелюбной обработкой ошибок.
+// Central API helper. Default export is apiFetch(path, opts) returning parsed JSON or throwing {status, data}.
+// Also exports getCsrfToken() and postForm helper for FormData file upload.
+
+function getCookie(name) {
+  if (typeof document === 'undefined') return null;
+  const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return v ? v.pop() : null;
+}
 
 export function getCsrfToken() {
-  const m = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/);
-  return m ? decodeURIComponent(m[2]) : "";
+  return getCookie('csrftoken') || getCookie('csrf') || null;
 }
 
-/**
- * Выполняет запрос к API.
- * - path: полный URL или относительный путь (например '/api/files/')
- * - options: те же опции, что и fetch; если body не FormData, то автоматически сериализуется в JSON
- * - автоматически добавляет credentials: 'include'
- * - автоматически добавляет заголовок X-CSRFToken для "изменяющих" методов
- * - возвращает распарсенный JSON (если Content-Type JSON) или текст/Response по необходимости
- * - при ошибке бросает Error с err.message и err.status/err.data
- */
-export async function apiFetch(path, options = {}) {
-  const opts = {
-    credentials: "include",
-    headers: { ...(options.headers || {}) },
-    method: options.method || "GET",
-    ...options,
-  };
-
-  // Если body присутствует и это не FormData — сериализуем в JSON
-  if (opts.body && !(opts.body instanceof FormData)) {
-    if (!opts.headers["Content-Type"]) opts.headers["Content-Type"] = "application/json";
-    if (typeof opts.body !== "string") opts.body = JSON.stringify(opts.body);
-  }
-
-  const method = (opts.method || "GET").toUpperCase();
-  // Для изменяющих методов добавляем CSRF токен из cookie (если есть)
-  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
-    const csrftoken = getCsrfToken();
-    if (csrftoken) opts.headers["X-CSRFToken"] = csrftoken;
-  }
-
-  const res = await fetch(path, opts);
-
-  const contentType = res.headers.get("content-type") || "";
-  let data = null;
-  if (contentType.includes("application/json")) {
-    data = await res.json().catch(() => null);
+async function parseJSONOrText(resp) {
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    return resp.json();
   } else {
-    data = await res.text().catch(() => null);
+    return resp.text();
+  }
+}
+
+export default async function apiFetch(path, opts = {}) {
+  const base = ''; // if API prefix required, set here e.g. process.env.API_BASE
+  const url = path.startsWith('http') ? path : (base + path);
+  const headers = opts.headers ? { ...opts.headers } : {};
+
+  // JSON body -> stringify
+  let body = opts.body;
+  if (body && !(body instanceof FormData) && typeof body === 'object' && opts.method && opts.method.toUpperCase() !== 'GET') {
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+    body = JSON.stringify(body);
   }
 
-  if (!res.ok) {
-    const message = (data && typeof data === "object" && (data.detail || data.error))
-      ? (data.detail || data.error)
-      : (typeof data === "string" && data.length ? data : `HTTP ${res.status}`);
-    const err = new Error(message);
-    err.status = res.status;
-    err.data = data;
+  // CSRF for stateful endpoints (POST/PATCH/PUT/DELETE)
+  const method = (opts.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const csrf = getCsrfToken();
+    if (csrf) headers['X-CSRFToken'] = csrf;
+  }
+
+  // credentials included to support session auth
+  const resp = await fetch(url, {
+    method,
+    credentials: 'include',
+    headers,
+    body,
+  });
+
+  if (resp.ok) {
+    // For endpoints returning files (attachment) we want to return resp (caller can handle)
+    const disposition = resp.headers.get('content-disposition') || '';
+    if (disposition.toLowerCase().includes('attachment')) {
+      // return raw response for download handlers
+      return resp;
+    }
+    // parse JSON or text
+    const data = await parseJSONOrText(resp);
+    return data;
+  } else {
+    // parse error body if possible
+    let data;
+    try {
+      data = await parseJSONOrText(resp);
+    } catch (e) {
+      data = resp.statusText || 'Error';
+    }
+    const err = { status: resp.status, data };
     throw err;
   }
-
-  return data;
 }
 
-export default apiFetch;
+// Helper for posting FormData (file upload)
+export async function postForm(path, formData) {
+  // do not set Content-Type for FormData (browser will set boundary)
+  const headers = {};
+  const csrf = getCsrfToken();
+  if (csrf) headers['X-CSRFToken'] = csrf;
+  const resp = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: formData,
+  });
+  if (resp.ok) {
+    const ct = (resp.headers.get('content-type') || '');
+    if (ct.includes('application/json')) return resp.json();
+    return resp;
+  } else {
+    let data;
+    try { data = await resp.json(); } catch(e){ data = await resp.text(); }
+    throw { status: resp.status, data };
+  }
+}

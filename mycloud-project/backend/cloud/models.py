@@ -1,4 +1,3 @@
-# backend/cloud/models.py
 import os
 import uuid
 from django.conf import settings
@@ -16,7 +15,7 @@ def user_file_upload_to(instance, filename):
     Формирует путь: user_<owner_id>/folder_<folder_id or root>/<uuid4><ext>
     """
     ext = os.path.splitext(filename)[1]
-    owner_id = getattr(instance, "owner_id", None) or (instance.owner.pk if instance.owner and instance.owner.pk else "anonymous")
+    owner_id = getattr(instance, "owner_id", None) or (instance.owner.pk if getattr(instance, "owner", None) else "anonymous")
     folder_part = "root"
     if getattr(instance, "folder", None):
         folder_part = f"folder_{instance.folder.pk}"
@@ -26,17 +25,27 @@ def user_file_upload_to(instance, filename):
 class UserProfile(models.Model):
     """
     Профиль пользователя: хранит квоту и отображаемое полное имя.
+    used_bytes вычисляется по файлам (не хранится).
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     full_name = models.CharField(max_length=255, blank=True)
-    quota = models.BigIntegerField(default=settings.USER_DEFAULT_QUOTA, validators=[MinValueValidator(0)])  # байты
+    quota = models.BigIntegerField(default=getattr(settings, "USER_DEFAULT_QUOTA", 10 * 1024 * 1024 * 1024), validators=[MinValueValidator(0)])  # байты
 
     def __str__(self):
         return f"profile:{self.user.username}"
 
     def get_used_bytes(self):
         # суммируем size у всех файлов пользователя
-        return int(self.user.files.aggregate(total=models.Sum("size"))["total"] or 0)
+        try:
+            ag = self.user.files.aggregate(total=models.Sum("size"))
+            return int(ag["total"] or 0)
+        except Exception:
+            return 0
+
+    @property
+    def used_bytes(self):
+        # удобное свойство — избавит от ошибок обращения profile.used_bytes
+        return self.get_used_bytes()
 
     def remaining_bytes(self):
         used = self.get_used_bytes()
@@ -47,6 +56,10 @@ class Folder(models.Model):
     name = models.CharField(max_length=255)
     parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.CASCADE, related_name="children")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # sharing
+    is_shared = models.BooleanField(default=False)
+    share_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
 
     class Meta:
         unique_together = ("owner", "parent", "name")
@@ -63,6 +76,17 @@ class Folder(models.Model):
             node = node.parent
         return "/".join(reversed(parts))
 
+    def generate_share_token(self):
+        self.share_token = uuid.uuid4().hex
+        self.is_shared = True
+        self.save(update_fields=["share_token", "is_shared"])
+        return self.share_token
+
+    def revoke_share(self):
+        self.share_token = None
+        self.is_shared = False
+        self.save(update_fields=["share_token", "is_shared"])
+
 class UserFile(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="files")
     folder = models.ForeignKey(Folder, on_delete=models.CASCADE, related_name="files", null=True, blank=True)
@@ -74,6 +98,7 @@ class UserFile(models.Model):
     comment = models.TextField(blank=True)
     is_shared = models.BooleanField(default=False)
     share_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    download_count = models.BigIntegerField(default=0)
 
     class Meta:
         ordering = ("-uploaded_at",)
@@ -107,8 +132,18 @@ class UserFile(models.Model):
         self.save(update_fields=["share_token", "is_shared"])
 
     def mark_downloaded(self):
-        self.last_downloaded_at = timezone.now()
-        self.save(update_fields=["last_downloaded_at"])
+        # Увеличиваем счётчик и ставим время
+        try:
+            self.download_count = (self.download_count or 0) + 1
+            self.last_downloaded_at = timezone.now()
+            self.save(update_fields=["download_count", "last_downloaded_at"])
+        except Exception:
+            # на случай ошибок записи
+            self.last_downloaded_at = timezone.now()
+            try:
+                self.save(update_fields=["last_downloaded_at"])
+            except Exception:
+                pass
 
     def rename(self, new_name):
         self.original_name = new_name
@@ -130,4 +165,4 @@ def delete_file_on_record_delete(sender, instance, **kwargs):
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
         # создаём профиль с дефолтной квотой, имя пустое
-        UserProfile.objects.create(user=instance, quota=settings.USER_DEFAULT_QUOTA)
+        UserProfile.objects.create(user=instance, quota=getattr(settings, "USER_DEFAULT_QUOTA", 10 * 1024 * 1024 * 1024))
