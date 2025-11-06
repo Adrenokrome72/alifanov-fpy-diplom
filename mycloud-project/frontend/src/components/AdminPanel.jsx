@@ -5,21 +5,11 @@ import { showToast } from "../utils/toast";
 import formatBytes from "../utils/formatBytes";
 import { useNavigate } from "react-router-dom";
 
-/*
- AdminPanel:
-  - list users (GET /api/admin-users/)
-  - set quota (POST /api/admin-users/{id}/set_quota/)
-  - set admin (POST /api/admin-users/{id}/set_admin/)
-  - toggle active (POST /api/admin-users/{id}/toggle_active/)
-  - delete user with purge (DELETE /api/admin-users/{id}/?purge=true) OR custom endpoint (we try delete then show)
-  - open storage: navigate to /files?owner=<id> which FileManager supports
-*/
-
+/* parse size like '15GB' -> bytes */
 function parseSizeToBytes(input) {
   if (!input && input !== 0) return null;
   const s = String(input).trim().toUpperCase();
   if (!s) return null;
-  // Accept formats like: 15GB, 500MB, 1024, 2.5GB, 200K, 200KB
   const match = s.match(/^([\d,.]+)\s*(B|KB|K|MB|M|GB|G|TB|T)?$/i);
   if (!match) return null;
   let num = parseFloat(match[1].replace(",", "."));
@@ -41,7 +31,6 @@ export default function AdminPanel() {
     setLoading(true);
     try {
       const data = await apiFetch("/api/admin-users/");
-      // expected array with fields: id, username, full_name, quota, files_size, files_count, is_staff, is_active
       setUsers(data || []);
     } catch (e) {
       showToast("Ошибка загрузки списка пользователей", { type: "error" });
@@ -57,12 +46,23 @@ export default function AdminPanel() {
   };
 
   const toggleAdmin = async (user) => {
+    // set _pending_admin on user to indicate in-flight
+    setUsers(prev => prev.map(u => u.id === user.id ? { ...u, _pending_admin: true } : u));
     try {
-      await apiFetch(`/api/admin-users/${user.id}/set_admin/`, { method: "POST", body: { set_admin: !user.is_staff }});
-      showToast(user.is_staff ? "Права администратора отозваны" : "Пользователь назначен администратором", { type: "success" });
-      await loadUsers();
+      const res = await apiFetch(`/api/admin-users/${user.id}/set_admin/`, { method: "POST", body: { set_admin: !user.is_staff }});
+      // Backend ideally returns updated user. If so, use it:
+      if (res && res.id) {
+        setUsers(prev => prev.map(u => u.id === res.id ? { ...u, is_staff: !!res.is_staff, _pending_admin: false } : u));
+      } else {
+        // fallback - toggle locally after success
+        setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_staff: !u.is_staff, _pending_admin: false } : u));
+      }
+      showToast(!user.is_staff ? "Пользователь назначен администратором" : "Права администратора отозваны", { type: "success" });
     } catch (e) {
       showToast("Ошибка изменения прав", { type: "error" });
+      // revert pending mark
+      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, _pending_admin: false } : u));
+      await loadUsers();
     }
   };
 
@@ -71,9 +71,7 @@ export default function AdminPanel() {
       await apiFetch(`/api/admin-users/${user.id}/toggle_active/`, { method: "POST" });
       showToast(user.is_active ? "Пользователь заблокирован" : "Пользователь разблокирован", { type: "success" });
       await loadUsers();
-    } catch (e) {
-      showToast("Ошибка изменения статуса", { type: "error" });
-    }
+    } catch (e) { showToast("Ошибка изменения статуса", { type: "error" }); }
   };
 
   const handleSetQuotaStart = (user) => {
@@ -95,9 +93,7 @@ export default function AdminPanel() {
       setEditingQuotaFor(null);
       setQuotaInput("");
       await loadUsers();
-    } catch (e) {
-      showToast("Ошибка установки квоты", { type: "error" });
-    }
+    } catch (e) { showToast("Ошибка установки квоты", { type: "error" }); }
   };
 
   const handleDeleteUser = async (user) => {
@@ -106,9 +102,7 @@ export default function AdminPanel() {
       await apiFetch(`/api/admin-users/${user.id}/`, { method: "DELETE", body: { purge: true }});
       showToast("Пользователь удалён", { type: "success" });
       await loadUsers();
-    } catch (e) {
-      showToast("Ошибка удаления пользователя", { type: "error" });
-    }
+    } catch (e) { showToast("Ошибка удаления пользователя", { type: "error" }); }
   };
 
   return (
@@ -152,9 +146,9 @@ export default function AdminPanel() {
                     <td style={{padding:8}}>{u.files_size != null ? formatBytes(u.files_size) : "0 B"}</td>
                     <td style={{padding:8}}>{u.files_count ?? 0}</td>
                     <td style={{padding:8}}>{u.is_active ? "Активен" : "Заблокирован"}</td>
-                    <td style={{padding:8, display:"flex", gap:6}}>
+                    <td style={{padding:8, display:"flex", gap:6, flexWrap:"wrap"}}>
                       <button className="btn btn-primary" onClick={()=>openStorage(u.id)}>Открыть хранилище</button>
-                      <button className="btn" onClick={()=>toggleAdmin(u)}>{u.is_staff ? "Revoke Admin" : "Make Admin"}</button>
+                      <button className="btn" onClick={()=>toggleAdmin(u)}>{u._pending_admin ? "..." : (u.is_staff ? "Отозвать админ" : "Назначить админ")}</button>
                       <button className="btn" onClick={()=>toggleActive(u)}>{u.is_active ? "Блокировать" : "Разблокировать"}</button>
                       <button className="btn btn-danger" onClick={()=>handleDeleteUser(u)}>Удалить</button>
                     </td>

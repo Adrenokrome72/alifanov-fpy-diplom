@@ -1,68 +1,55 @@
 // frontend/src/components/FolderTree.jsx
-import React, { useEffect, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { fetchFolders, createFolder, deleteFolder, renameFolder } from '../features/foldersSlice';
+import React from 'react';
 
-export default function FolderTree({ onSelectFolder, selectedFolder }) {
-  const dispatch = useDispatch();
-  const folders = useSelector(s => s.folders.items || []);
-  const status = useSelector(s => s.folders.status);
-  const [newName, setNewName] = useState("");
-
-  useEffect(() => { dispatch(fetchFolders()); }, [dispatch]);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    await dispatch(createFolder({ name: newName.trim() }));
-    setNewName("");
-    dispatch(fetchFolders());
+/*
+  FolderTree: принимает уже отфильтрованный массив папок (т.е. фильтрация по владельцу делается снаружи).
+  props:
+    - folders: flat array [{id,name,parent,owner,...}]
+    - currentFolder: id|null
+    - onOpen(id) - двойной клик открыть
+    - onSelect(node) - один клик выбрать
+*/
+function buildTree(flat) {
+  const map = new Map();
+  flat.forEach(f => map.set(f.id, { ...f, children: [] }));
+  const roots = [];
+  map.forEach(node => {
+    if (node.parent == null) roots.push(node);
+    else {
+      const p = map.get(node.parent);
+      if (p) p.children.push(node);
+      else roots.push(node);
+    }
+  });
+  const sortRec = (nodes) => {
+    nodes.sort((a,b)=>a.name.localeCompare(b.name));
+    nodes.forEach(n=> sortRec(n.children));
   };
+  sortRec(roots);
+  return roots;
+}
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete folder and all its contents?")) return;
-    await dispatch(deleteFolder({ id }));
-    dispatch(fetchFolders());
-    if (selectedFolder === id) onSelectFolder(null);
-  };
-
-  const handleRename = async (folder) => {
-    const name = window.prompt("New folder name", folder.name);
-    if (!name) return;
-    await dispatch(renameFolder({ id: folder.id, name }));
-    dispatch(fetchFolders());
-  };
-
+function Node({ node, level=0, onOpen, onSelect, currentFolder }) {
+  const [collapsed, setCollapsed] = React.useState(false);
   return (
-    <div className="bg-white p-3 rounded shadow">
-      <div className="mb-3">
-        <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="New folder name"
-               className="border rounded p-1 w-full" />
-        <div className="mt-2 flex gap-2">
-          <button onClick={handleCreate} className="px-3 py-1 bg-sky-600 text-white rounded">Create</button>
-          <div className="text-sm text-gray-500 self-center">Folders: {folders.length}</div>
+    <div style={{ paddingLeft: level * 12, marginBottom:6 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+        <button className="btn-min" onClick={(e)=>{ e.stopPropagation(); setCollapsed(c=>!c); }}>{collapsed ? "+" : "-"}</button>
+        <div style={{ cursor:"pointer", flex:1 }} onClick={()=>onSelect(node)} onDoubleClick={()=>onOpen(node.id)}>
+          <div style={{ fontWeight: currentFolder===node.id ? 700 : 500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{node.name}</div>
+          { node.children && node.children.length>0 && <div style={{ fontSize:12, color:"#6b7280" }}>{node.children.length} подпапок</div> }
         </div>
       </div>
+      {!collapsed && node.children && node.children.map(c => <Node key={c.id} node={c} level={level+1} onOpen={onOpen} onSelect={onSelect} currentFolder={currentFolder} />)}
+    </div>
+  );
+}
 
-      <div>
-        {status === 'loading' && <div className="text-sm text-gray-500">Loading...</div>}
-        <ul className="space-y-2">
-          {folders.map(folder => (
-            <li key={folder.id} className={`p-2 rounded hover:bg-gray-50 ${selectedFolder === folder.id ? 'bg-sky-50 border' : ''}`}>
-              <div className="flex justify-between items-center">
-                <button onClick={() => onSelectFolder(folder.id)} className="text-left flex-1">
-                  <div className="font-medium">{folder.name}</div>
-                  <div className="text-xs text-gray-500">ID: {folder.id}</div>
-                </button>
-                <div className="flex gap-2 ml-2">
-                  <button onClick={()=>handleRename(folder)} className="text-sm text-gray-700">Rename</button>
-                  <button onClick={()=>handleDelete(folder.id)} className="text-sm text-red-600">Delete</button>
-                </div>
-              </div>
-            </li>
-          ))}
-          {folders.length === 0 && <li className="text-sm text-gray-500">No folders yet</li>}
-        </ul>
-      </div>
+export default function FolderTree({ folders = [], onOpen = ()=>{}, onSelect = ()=>{}, currentFolder = null }) {
+  const tree = React.useMemo(()=> buildTree(folders || []), [folders]);
+  return (
+    <div>
+      {tree.map(r => <Node key={r.id} node={r} onOpen={onOpen} onSelect={onSelect} currentFolder={currentFolder} />)}
     </div>
   );
 }
