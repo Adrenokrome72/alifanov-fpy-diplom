@@ -105,30 +105,12 @@ export const downloadFile = createAsyncThunk(
   'files/downloadFile',
   async ({ id }, thunkAPI) => {
     try {
-      // backend returns attachment; apiFetch returns Response if attachment
-      const resp = await apiFetch(`/api/files/${id}/download/`);
-      if (resp && resp.blob) {
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        // try to get filename from content-disposition
-        const disp = resp.headers.get('content-disposition') || '';
-        let filename = null;
-        const match = disp.match(/filename\*=UTF-8''([^;]+)/) || disp.match(/filename="?([^"]+)"?/);
-        if (match) filename = decodeURIComponent(match[1]);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename || 'file';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } else {
-        // fallback: navigate to endpoint (session auth works)
-        window.location.href = `/api/files/${id}/download/`;
-      }
-      // refresh current user usage and file metadata
-      try { await thunkAPI.dispatch(fetchCurrentUser()); } catch(e){/*ignore*/}
-      try { await thunkAPI.dispatch(fetchFiles({})); } catch(e){/*ignore*/}
+      // Просто открываем ссылку для скачивания - это должно работать с сессионной аутентификацией
+      window.open(`/api/files/${id}/download/`, '_self');
+      
+      // Обновляем данные о пользователе и файлах
+      try { await thunkAPI.dispatch(fetchCurrentUser()); } catch(e){}
+      try { await thunkAPI.dispatch(fetchFiles({})); } catch(e){}
       return { id };
     } catch (err) {
       return thunkAPI.rejectWithValue(err);

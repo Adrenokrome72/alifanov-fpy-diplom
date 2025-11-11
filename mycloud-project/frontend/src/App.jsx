@@ -8,6 +8,7 @@ import Login from "./components/Login";
 import Register from "./components/Register";
 import AdminPanel from "./components/AdminPanel";
 import Home from "./components/Home";
+import AdminStorageView from "./components/AdminStorageView"; // Измененный импорт
 import { fetchCurrentUser } from "./features/authSlice";
 
 export default function App() {
@@ -16,10 +17,8 @@ export default function App() {
   const authStatus = useSelector((s) => s.auth.status);
 
   useEffect(() => {
-    // при старте попытаемся получить текущего пользователя
     if (typeof fetchCurrentUser === "function") {
       dispatch(fetchCurrentUser()).catch(()=>{});
-      // Предоставим глобальную функцию для ручного триггера обновления профиля
       window.fetchCurrentUser = async () => {
         try {
           await dispatch(fetchCurrentUser()).unwrap();
@@ -43,6 +42,7 @@ export default function App() {
           <Route path="/files" element={user ? <FileManager /> : <Navigate to="/login" replace />} />
           <Route path="/login" element={!user ? <Login /> : <Navigate to="/files" replace />} />
           <Route path="/register" element={!user ? <Register /> : <Navigate to="/files" replace />} />
+          <Route path="/admin/storage/:userId" element={<AdminStorageView />} />
           {user && user.is_staff && <Route path="/admin" element={<AdminPanel />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

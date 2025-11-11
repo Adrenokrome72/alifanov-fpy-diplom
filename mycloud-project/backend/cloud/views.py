@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from rest_framework.exceptions import PermissionDenied
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import login as django_login, logout as django_logout, get_user_model
@@ -78,15 +79,62 @@ class FolderViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        owner_q = self.request.query_params.get("owner")
-        if owner_q and user.is_staff:
-            return Folder.objects.filter(owner_id=owner_q)
-        if user.is_staff:
-            return Folder.objects.all()
-        return Folder.objects.filter(owner=user)
+        parent_q = self.request.query_params.get("parent")
+        qs = Folder.objects.filter(owner=user)  # Только свои папки
+        
+        if parent_q:
+            if parent_q.lower() in ("null", "none", ""):
+                qs = qs.filter(parent__isnull=True)
+            else:
+                qs = qs.filter(parent_id=parent_q)
+        
+        return qs.order_by("name")
 
     def perform_create(self, serializer):
+        if self.request.user.is_staff:
+            # Получаем данные из запроса
+            data = serializer.validated_data
+            
+            # Для папки: проверяем parent, если он указан
+            if hasattr(self, 'get_owner_from_data'):
+                owner_id = self.get_owner_from_data(data)
+            else:
+                # По умолчанию считаем, что владелец - текущий пользователь
+                owner_id = self.request.user.id
+            
+            # Разрешаем если:
+            # 1. Админ создает объект для себя ИЛИ
+            # 2. Parent принадлежит админу (если указан)
+            if owner_id != self.request.user.id:
+                # Проверяем parent для папок
+                parent = data.get('parent')
+                if parent and parent.owner.id == self.request.user.id:
+                    # Разрешаем - parent принадлежит админу
+                    pass
+                else:
+                    # Проверяем folder для файлов
+                    folder = data.get('folder')
+                    if folder and folder.owner.id == self.request.user.id:
+                        # Разрешаем - folder принадлежит админу
+                        pass
+                    else:
+                        raise PermissionDenied("Admin cannot create items for other users")
+        
         serializer.save(owner=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Администратор не может изменять чужие данные
+        if request.user.is_staff and instance.owner != request.user:
+            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Администратор не может удалять чужие данные
+        if request.user.is_staff and instance.owner != request.user:
+            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"])
     def share(self, request, pk=None):
@@ -194,17 +242,62 @@ class UserFileViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # admin may pass owner param to view other user's files
-        owner_q = self.request.query_params.get("owner")
-        if owner_q and user.is_staff:
-            return UserFile.objects.filter(owner_id=owner_q)
-        if user.is_staff:
-            return UserFile.objects.all()
-        return UserFile.objects.filter(owner=user)
+        folder_q = self.request.query_params.get("folder")
+        qs = UserFile.objects.filter(owner=user)  # Только свои файлы
+        
+        if folder_q:
+            if folder_q.lower() in ("null", "none", ""):
+                qs = qs.filter(folder__isnull=True)
+            else:
+                qs = qs.filter(folder_id=folder_q)
+        
+        return qs
 
     def perform_create(self, serializer):
-        # ensure owner is request.user
+        if self.request.user.is_staff:
+            # Получаем данные из запроса
+            data = serializer.validated_data
+            
+            # Для папки: проверяем parent, если он указан
+            if hasattr(self, 'get_owner_from_data'):
+                owner_id = self.get_owner_from_data(data)
+            else:
+                # По умолчанию считаем, что владелец - текущий пользователь
+                owner_id = self.request.user.id
+            
+            # Разрешаем если:
+            # 1. Админ создает объект для себя ИЛИ
+            # 2. Parent принадлежит админу (если указан)
+            if owner_id != self.request.user.id:
+                # Проверяем parent для папок
+                parent = data.get('parent')
+                if parent and parent.owner.id == self.request.user.id:
+                    # Разрешаем - parent принадлежит админу
+                    pass
+                else:
+                    # Проверяем folder для файлов
+                    folder = data.get('folder')
+                    if folder and folder.owner.id == self.request.user.id:
+                        # Разрешаем - folder принадлежит админу
+                        pass
+                    else:
+                        raise PermissionDenied("Admin cannot create items for other users")
+        
         serializer.save(owner=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Администратор не может изменять чужие данные
+        if request.user.is_staff and instance.owner != request.user:
+            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Администратор не может удалять чужие данные
+        if request.user.is_staff and instance.owner != request.user:
+            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         # robust creation for multipart
@@ -343,9 +436,25 @@ class AdminUserViewSet(viewsets.ViewSet):
         return Response(serializer.data)
 
     def retrieve(self, request, pk=None):
-        user = get_object_or_404(User, pk=pk)
-        serializer = AdminUserSerializer(user, context={"request": request})
-        return Response(serializer.data)
+        folder = self.get_object()
+        # Разрешаем доступ администратору к любым папкам
+        if not (request.user.is_staff or folder.owner == request.user):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        
+        # get children folders
+        children = Folder.objects.filter(parent=folder).order_by("name")
+        # get files
+        files = UserFile.objects.filter(folder=folder).order_by("-uploaded_at")
+        
+        ser_folder = self.get_serializer(folder)
+        ser_children = self.get_serializer(children, many=True)
+        ser_files = UserFileSerializer(files, many=True, context={"request": request})
+        
+        return Response({
+            "folder": ser_folder.data,
+            "children": ser_children.data,
+            "files": ser_files.data,
+        })
 
     @action(detail=True, methods=["post"])
     def set_quota(self, request, pk=None):
@@ -381,22 +490,21 @@ class AdminUserViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def toggle_active(self, request, pk=None):
         user = get_object_or_404(User, pk=pk)
-        val = request.data.get("is_active")
-        if val in (True, "true", "True", "1", 1):
-            user.is_active = True
-        else:
-            user.is_active = False
+        
+        # Получаем текущее состояние и инвертируем его
+        current_status = user.is_active
+        user.is_active = not current_status
         user.save(update_fields=["is_active"])
-        return Response({"detail": "is_active set", "is_active": user.is_active}, status=status.HTTP_200_OK)
+        
+        return Response({
+            "detail": "User status updated", 
+            "is_active": user.is_active
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"])
     def storage(self, request, pk=None):
-        """
-        Returns top-level folders and top-level files for the given user,
-        as well as used_bytes and quota. Admin can use this to navigate to user's storage.
-        """
+        """Корневое хранилище пользователя (для обратной совместимости)"""
         user = get_object_or_404(User, pk=pk)
-        # top-level folders (parent IS NULL)
         folders = Folder.objects.filter(owner=user, parent__isnull=True).order_by("name")
         files = UserFile.objects.filter(owner=user, folder__isnull=True).order_by("-uploaded_at")
 
@@ -433,6 +541,66 @@ class AdminUserViewSet(viewsets.ViewSet):
         else:
             user.delete()
             return Response({"detail": "user deleted"}, status=status.HTTP_200_OK)
+        
+    @action(detail=True, methods=["get"])
+    def storage_tree(self, request, pk=None):
+        """Получить полное дерево папок пользователя для админ-просмотра"""
+        user = get_object_or_404(User, pk=pk)
+        
+        def build_folder_tree(folder):
+            """Рекурсивно строим дерево папок"""
+            children = Folder.objects.filter(parent=folder, owner=user).order_by("name")
+            files = UserFile.objects.filter(folder=folder, owner=user).order_by("-uploaded_at")
+            
+            folder_data = FolderSerializer(folder, context={"request": request}).data
+            folder_data["children"] = [build_folder_tree(child) for child in children]
+            folder_data["files"] = UserFileSerializer(files, many=True, context={"request": request}).data
+            
+            return folder_data
+        
+        # Корневые папки
+        root_folders = Folder.objects.filter(owner=user, parent__isnull=True).order_by("name")
+        root_files = UserFile.objects.filter(owner=user, folder__isnull=True).order_by("-uploaded_at")
+        
+        tree_data = {
+            "root_folders": [build_folder_tree(folder) for folder in root_folders],
+            "root_files": UserFileSerializer(root_files, many=True, context={"request": request}).data,
+            "user_info": {
+                "id": user.id,
+                "username": user.username,
+                "full_name": getattr(user.profile, 'full_name', ''),
+            }
+        }
+        
+        return Response(tree_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"])
+    def folder_contents(self, request, pk=None):
+        """Получить содержимое конкретной папки пользователя"""
+        user = get_object_or_404(User, pk=pk)
+        folder_id = request.query_params.get("folder_id")
+        
+        if not folder_id:
+            return Response({"detail": "folder_id parameter required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            folder = Folder.objects.get(id=folder_id, owner=user)
+        except Folder.DoesNotExist:
+            return Response({"detail": "Folder not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Получаем содержимое папки
+        children = Folder.objects.filter(parent=folder, owner=user).order_by("name")
+        files = UserFile.objects.filter(folder=folder, owner=user).order_by("-uploaded_at")
+        
+        folder_data = FolderSerializer(folder, context={"request": request}).data
+        children_data = FolderSerializer(children, many=True, context={"request": request}).data
+        files_data = UserFileSerializer(files, many=True, context={"request": request}).data
+        
+        return Response({
+            "folder": folder_data,
+            "children": children_data,
+            "files": files_data
+        }, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])

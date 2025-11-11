@@ -98,6 +98,8 @@ class FolderSerializer(serializers.ModelSerializer):
     owner_full_name = serializers.SerializerMethodField()
     files_count = serializers.SerializerMethodField()
     children_count = serializers.SerializerMethodField()
+    children = serializers.SerializerMethodField()  # Добавляем поле children
+    files = serializers.SerializerMethodField()     # Добавляем поле files
 
     class Meta:
         model = Folder
@@ -112,6 +114,8 @@ class FolderSerializer(serializers.ModelSerializer):
             "share_token",
             "files_count",
             "children_count",
+            "children",
+            "files",
         )
 
     def get_owner_username(self, obj):
@@ -137,6 +141,16 @@ class FolderSerializer(serializers.ModelSerializer):
             return obj.children.count()
         except Exception:
             return 0
+        
+    def get_children(self, obj):
+        """Получаем непосредственных детей папки"""
+        children = Folder.objects.filter(parent=obj).order_by("name")
+        return FolderSerializer(children, many=True, context=self.context).data
+
+    def get_files(self, obj):
+        """Получаем файлы в этой папке"""
+        files = UserFile.objects.filter(folder=obj).order_by("-uploaded_at")
+        return UserFileSerializer(files, many=True, context=self.context).data
 
 
 class UserFileSerializer(serializers.ModelSerializer):

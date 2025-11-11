@@ -19,4 +19,6 @@ urlpatterns = [
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("auth/csrf/", csrf_token_view, name="api-csrf"),
     path("auth/me/", current_user_view, name="api-current-user"),
+    path("admin-users/<int:pk>/storage_tree/", AdminUserViewSet.as_view({'get': 'storage_tree'}), name="admin-storage-tree"),
+    path("admin-users/<int:pk>/folder_contents/", AdminUserViewSet.as_view({'get': 'folder_contents'}), name="admin-folder-contents"),
 ]

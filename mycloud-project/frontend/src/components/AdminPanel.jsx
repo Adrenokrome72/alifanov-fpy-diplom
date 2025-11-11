@@ -4,6 +4,7 @@ import apiFetch from "../api";
 import { showToast } from "../utils/toast";
 import formatBytes from "../utils/formatBytes";
 import { useNavigate } from "react-router-dom";
+import { useSelector } from "react-redux";
 
 /* parse size like '15GB' -> bytes */
 function parseSizeToBytes(input) {
@@ -26,6 +27,7 @@ export default function AdminPanel() {
   const [editingQuotaFor, setEditingQuotaFor] = useState(null);
   const [quotaInput, setQuotaInput] = useState("");
   const navigate = useNavigate();
+  const user = useSelector((state) => state.auth.user);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -42,7 +44,8 @@ export default function AdminPanel() {
   useEffect(() => { loadUsers(); }, []);
 
   const openStorage = (uid) => {
-    navigate(`/files?owner=${uid}`);
+    console.log('Opening storage for user ID:', uid, 'type:', typeof uid);
+    navigate(`/admin/storage/${uid}`);
   };
 
   const toggleAdmin = async (user) => {
@@ -67,11 +70,24 @@ export default function AdminPanel() {
   };
 
   const toggleActive = async (user) => {
+    // Оптимистичное обновление
+    setUsers(prev => prev.map(u => 
+      u.id === user.id ? { ...u, is_active: !u.is_active, _pending: true } : u
+    ));
+    
     try {
       await apiFetch(`/api/admin-users/${user.id}/toggle_active/`, { method: "POST" });
       showToast(user.is_active ? "Пользователь заблокирован" : "Пользователь разблокирован", { type: "success" });
+      
+      // Обновляем данные с сервера для гарантии синхронизации
       await loadUsers();
-    } catch (e) { showToast("Ошибка изменения статуса", { type: "error" }); }
+    } catch (e) { 
+      showToast("Ошибка изменения статуса", { type: "error" });
+      // Откатываем изменения при ошибке
+      setUsers(prev => prev.map(u => 
+        u.id === user.id ? { ...u, is_active: user.is_active, _pending: false } : u
+      ));
+    }
   };
 
   const handleSetQuotaStart = (user) => {
@@ -147,9 +163,14 @@ export default function AdminPanel() {
                     <td style={{padding:8}}>{u.files_count ?? 0}</td>
                     <td style={{padding:8}}>{u.is_active ? "Активен" : "Заблокирован"}</td>
                     <td style={{padding:8, display:"flex", gap:6, flexWrap:"wrap"}}>
-                      <button className="btn btn-primary" onClick={()=>openStorage(u.id)}>Открыть хранилище</button>
+                      <button className="btn btn-primary" onClick={() => {
+                        console.log('Button clicked for user:', u.id, 'username:', u.username);
+                        openStorage(u.id);
+                      }}>
+                        Открыть хранилище
+                      </button>
                       <button className="btn" onClick={()=>toggleAdmin(u)}>{u._pending_admin ? "..." : (u.is_staff ? "Отозвать админ" : "Назначить админ")}</button>
-                      <button className="btn" onClick={()=>toggleActive(u)}>{u.is_active ? "Блокировать" : "Разблокировать"}</button>
+                        <button className="btn" onClick={() => toggleActive(u)} disabled={u._pending}>{u._pending ? "..." : (u.is_active ? "Блокировать" : "Разблокировать")}</button>
                       <button className="btn btn-danger" onClick={()=>handleDeleteUser(u)}>Удалить</button>
                     </td>
                   </tr>
