@@ -1,184 +1,232 @@
-// frontend/src/components/AdminPanel.jsx
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import apiFetch from "../api";
 import { showToast } from "../utils/toast";
 import formatBytes from "../utils/formatBytes";
-import { useNavigate } from "react-router-dom";
-import { useSelector } from "react-redux";
-
-/* parse size like '15GB' -> bytes */
-function parseSizeToBytes(input) {
-  if (!input && input !== 0) return null;
-  const s = String(input).trim().toUpperCase();
-  if (!s) return null;
-  const match = s.match(/^([\d,.]+)\s*(B|KB|K|MB|M|GB|G|TB|T)?$/i);
-  if (!match) return null;
-  let num = parseFloat(match[1].replace(",", "."));
-  if (Number.isNaN(num)) return null;
-  const unit = (match[2] || "B").toUpperCase();
-  const map = { B: 1, K: 1024, KB: 1024, M: 1024 ** 2, MB: 1024 ** 2, G: 1024 ** 3, GB: 1024 ** 3, T: 1024 ** 4, TB: 1024 ** 4 };
-  const factor = map[unit] || 1;
-  return Math.round(num * factor);
-}
 
 export default function AdminPanel() {
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [editingQuotaFor, setEditingQuotaFor] = useState(null);
-  const [quotaInput, setQuotaInput] = useState("");
   const navigate = useNavigate();
-  const user = useSelector((state) => state.auth.user);
 
-  const loadUsers = async () => {
-    setLoading(true);
-    try {
-      const data = await apiFetch("/api/admin-users/");
-      setUsers(data || []);
-    } catch (e) {
-      showToast("Ошибка загрузки списка пользователей", { type: "error" });
-    } finally {
-      setLoading(false);
-    }
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [refreshFlag, setRefreshFlag] = useState(0);
+
+  const toast = (msg, opts = {}) => {
+    try { showToast && showToast(msg, opts); } catch (e) { console.log(msg); }
   };
 
-  useEffect(() => { loadUsers(); }, []);
+  const getUid = (u) => u?.id ?? u?.pk ?? u?.user_id ?? u?.uid ?? u?.username;
 
-  const openStorage = (uid) => {
-    console.log('Opening storage for user ID:', uid, 'type:', typeof uid);
-    navigate(`/admin/storage/${uid}`);
-  };
-
-  const toggleAdmin = async (user) => {
-    // set _pending_admin on user to indicate in-flight
-    setUsers(prev => prev.map(u => u.id === user.id ? { ...u, _pending_admin: true } : u));
-    try {
-      const res = await apiFetch(`/api/admin-users/${user.id}/set_admin/`, { method: "POST", body: { set_admin: !user.is_staff }});
-      // Backend ideally returns updated user. If so, use it:
-      if (res && res.id) {
-        setUsers(prev => prev.map(u => u.id === res.id ? { ...u, is_staff: !!res.is_staff, _pending_admin: false } : u));
-      } else {
-        // fallback - toggle locally after success
-        setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_staff: !u.is_staff, _pending_admin: false } : u));
+  // load users
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoadingUsers(true);
+      try {
+        const res = await apiFetch(`/api/admin-users/`);
+        const list = Array.isArray(res) ? res : (res.results || res.users || []);
+        if (mounted) setUsers(list || []);
+      } catch (e) {
+        console.error("AdminPanel: failed to load users", e);
+        toast("Не удалось загрузить список пользователей", { type: "error" });
+      } finally {
+        if (mounted) setLoadingUsers(false);
       }
-      showToast(!user.is_staff ? "Пользователь назначен администратором" : "Права администратора отозваны", { type: "success" });
-    } catch (e) {
-      showToast("Ошибка изменения прав", { type: "error" });
-      // revert pending mark
-      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, _pending_admin: false } : u));
-      await loadUsers();
+    };
+    load();
+    return () => { mounted = false; };
+  }, [refreshFlag]);
+
+  // block/unblock using server endpoints: toggle_active or specialized endpoints
+  const toggleBlock = async (user, isActive) => {
+    const uid = getUid(user);
+    if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
+    try {
+      // Try toggle_active endpoint first
+      try {
+        await apiFetch(`/api/admin-users/${uid}/toggle_active/`, { method: "POST", body: { is_active: !!isActive } });
+      } catch (e) {
+        // fallback to patch
+        await apiFetch(`/api/admin-users/${uid}/`, { method: "PATCH", body: { is_active: !!isActive } });
+      }
+      toast(isActive ? "Пользователь активирован" : "Пользователь деактивирован", { type: "success" });
+      setRefreshFlag(f => f + 1);
+    } catch (err) {
+      console.error("toggleBlock error", err);
+      toast("Не удалось изменить статус пользователя", { type: "error" });
     }
   };
 
-  const toggleActive = async (user) => {
-    // Оптимистичное обновление
-    setUsers(prev => prev.map(u => 
-      u.id === user.id ? { ...u, is_active: !u.is_active, _pending: true } : u
-    ));
-    
+  // set/remove admin: use set_admin endpoint or patch is_staff
+  const toggleAdmin = async (user, isAdmin) => {
+    const uid = getUid(user);
+    if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
     try {
-      await apiFetch(`/api/admin-users/${user.id}/toggle_active/`, { method: "POST" });
-      showToast(user.is_active ? "Пользователь заблокирован" : "Пользователь разблокирован", { type: "success" });
-      
-      // Обновляем данные с сервера для гарантии синхронизации
-      await loadUsers();
-    } catch (e) { 
-      showToast("Ошибка изменения статуса", { type: "error" });
-      // Откатываем изменения при ошибке
-      setUsers(prev => prev.map(u => 
-        u.id === user.id ? { ...u, is_active: user.is_active, _pending: false } : u
-      ));
+      try {
+        await apiFetch(`/api/admin-users/${uid}/set_admin/`, { method: "POST", body: { is_staff: !!isAdmin } });
+      } catch (e) {
+        await apiFetch(`/api/admin-users/${uid}/`, { method: "PATCH", body: { is_staff: !!isAdmin, is_admin: !!isAdmin } });
+      }
+      toast(isAdmin ? "Пользователь получил права администратора" : "Права администратора сняты", { type: "success" });
+      setRefreshFlag(f => f + 1);
+    } catch (err) {
+      console.error("toggleAdmin error", err);
+      toast("Не удалось изменить права администратора", { type: "error" });
     }
   };
 
-  const handleSetQuotaStart = (user) => {
-    setEditingQuotaFor(user.id);
-    setQuotaInput(user.quota != null ? String(user.quota) : "");
-  };
-
-  const handleSetQuotaCancel = () => {
-    setEditingQuotaFor(null);
-    setQuotaInput("");
-  };
-
-  const handleSetQuotaSave = async (user) => {
-    const bytes = parseSizeToBytes(quotaInput);
-    if (bytes === null) return showToast("Некорректный размер (пример: 15GB, 500MB)", { type: "error" });
+  // delete user (support purge query)
+  const deleteUser = async (user) => {
+    const uid = getUid(user);
+    if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
+    if (!window.confirm(`Удалить пользователя ${user.username || uid}? Это действие необратимо.`)) return;
     try {
-      await apiFetch(`/api/admin-users/${user.id}/set_quota/`, { method: "POST", body: { quota: bytes }});
-      showToast("Квота обновлена", { type: "success" });
-      setEditingQuotaFor(null);
-      setQuotaInput("");
-      await loadUsers();
-    } catch (e) { showToast("Ошибка установки квоты", { type: "error" }); }
+      const purge = window.confirm("Удалить полностью с очисткой данных (purge)? OK - да, Cancel - только аккаунт.");
+      const query = purge ? "?purge=true" : "";
+      await apiFetch(`/api/admin-users/${uid}/${query}`, { method: "DELETE" });
+      toast("Пользователь удалён", { type: "success" });
+      setSelectedUser(null);
+      setRefreshFlag(f => f + 1);
+    } catch (err) {
+      console.error("deleteUser error", err);
+      toast("Не удалось удалить пользователя", { type: "error" });
+    }
   };
 
-  const handleDeleteUser = async (user) => {
-    if (!confirm(`Удалить пользователя ${user.username}? (Будут удалены все его данные)`)) return;
-    try {
-      await apiFetch(`/api/admin-users/${user.id}/`, { method: "DELETE", body: { purge: true }});
-      showToast("Пользователь удалён", { type: "success" });
-      await loadUsers();
-    } catch (e) { showToast("Ошибка удаления пользователя", { type: "error" }); }
+  const viewStorage = (user) => {
+    const uid = getUid(user);
+    if (!uid) return toast("Не удалось открыть хранилище: неизвестный пользователь", { type: "error" });
+    navigate(`/admin/storage/${encodeURIComponent(uid)}`, { state: { user } });
   };
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="card p-4">
-        <h2 className="text-xl font-semibold mb-4">Панель администратора — Пользователи</h2>
+    <div className="container" style={{ paddingTop: 18 }}>
+      <div className="card">
+        <div className="card-title" style={{display: "flex", alignItems: "center", gap: 12}}>
+          <div style={{ fontWeight: 700, fontSize: 18 }}>Админ — пользователи</div>
+          <div style={{ marginLeft: "auto", color: "#65748b" }}>{loadingUsers ? "Загрузка..." : `${users.length} пользователей`}</div>
+        </div>
 
-        {loading ? <div>Загрузка...</div> : (
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%", borderCollapse:"collapse"}}>
-              <thead>
-                <tr style={{textAlign:"left", borderBottom:"1px solid #e5e7eb"}}>
-                  <th style={{padding:8}}>Логин</th>
-                  <th style={{padding:8}}>ФИО</th>
-                  <th style={{padding:8}}>Квота</th>
-                  <th style={{padding:8}}>Занято</th>
-                  <th style={{padding:8}}>Файлов</th>
-                  <th style={{padding:8}}>Статус</th>
-                  <th style={{padding:8}}>Действия</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map(u => (
-                  <tr key={u.id} style={{borderBottom:"1px solid #f3f4f6"}}>
-                    <td style={{padding:8}}>{u.username}</td>
-                    <td style={{padding:8}}>{u.full_name || "-"}</td>
-                    <td style={{padding:8}}>
-                      {editingQuotaFor === u.id ? (
-                        <div style={{display:"flex", gap:8}}>
-                          <input value={quotaInput} onChange={(e)=>setQuotaInput(e.target.value)} placeholder="15GB" className="border p-1 rounded" />
-                          <button className="btn btn-primary" onClick={()=>handleSetQuotaSave(u)}>Сохранить</button>
-                          <button className="btn" onClick={handleSetQuotaCancel}>Отмена</button>
+        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, marginTop: 12 }}>
+          <aside className="card" style={{ padding: 12, maxHeight: "70vh", overflow: "auto" }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Пользователи</div>
+
+            {loadingUsers ? (
+              <div className="muted">Загрузка...</div>
+            ) : users.length ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {users.map(u => {
+                  const uid = getUid(u);
+                  const isBlocked = !!u.is_blocked || !!u.blocked || u.is_active === false;
+                  const isAdmin = !!u.is_admin || !!u.isAdmin || !!u.admin || !!u.is_staff;
+                  return (
+                    <div
+                      key={uid}
+                      className={`folder-item ${selectedUser && getUid(selectedUser) === uid ? "active" : ""}`}
+                      onClick={() => setSelectedUser(u)}
+                      role="button"
+                      tabIndex={0}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer" }}
+                    >
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth:0 }}>
+                        <div className="icon">👤</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {u.username ?? u.email ?? `#${uid}`}
                         </div>
-                      ) : (
-                        <div style={{display:"flex", gap:8, alignItems:"center"}}>
-                          <div>{u.quota != null ? formatBytes(u.quota) : "не установлено"}</div>
-                          <button className="btn" onClick={()=>handleSetQuotaStart(u)}>Изменить</button>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{padding:8}}>{u.files_size != null ? formatBytes(u.files_size) : "0 B"}</td>
-                    <td style={{padding:8}}>{u.files_count ?? 0}</td>
-                    <td style={{padding:8}}>{u.is_active ? "Активен" : "Заблокирован"}</td>
-                    <td style={{padding:8, display:"flex", gap:6, flexWrap:"wrap"}}>
-                      <button className="btn btn-primary" onClick={() => {
-                        console.log('Button clicked for user:', u.id, 'username:', u.username);
-                        openStorage(u.id);
-                      }}>
-                        Открыть хранилище
-                      </button>
-                      <button className="btn" onClick={()=>toggleAdmin(u)}>{u._pending_admin ? "..." : (u.is_staff ? "Отозвать админ" : "Назначить админ")}</button>
-                        <button className="btn" onClick={() => toggleActive(u)} disabled={u._pending}>{u._pending ? "..." : (u.is_active ? "Блокировать" : "Разблокировать")}</button>
-                      <button className="btn btn-danger" onClick={()=>handleDeleteUser(u)}>Удалить</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <div className="muted" style={{ fontSize: 12 }}>{u.storage_used ? (formatBytes ? formatBytes(u.storage_used) : u.storage_used) : ""}</div>
+                        {isAdmin && <div className="muted" title="Администратор" style={{ fontSize: 12, paddingLeft: 6 }}>★</div>}
+                        {isBlocked && <div className="muted" title="Заблокирован" style={{ fontSize: 12, paddingLeft: 6 }}>⛔</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="muted">Пользователи не найдены</div>
+            )}
+          </aside>
+
+          <main className="main">
+            <div className="card" style={{ minHeight: 340 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 700 }}>{selectedUser ? (selectedUser.username ?? selectedUser.email ?? "Пользователь") : "Выберите пользователя"}</div>
+                <div className="muted">{selectedUser ? `id: ${getUid(selectedUser)}` : ""}</div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                {/* Only show action buttons when a user is selected */}
+                {selectedUser && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => selectedUser && viewStorage(selectedUser)}
+                  >
+                    Просмотреть хранилище
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => selectedUser && toggleBlock(selectedUser, false)}
+                  >
+                    Разблокировать
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => selectedUser && toggleBlock(selectedUser, true)}
+                  >
+                    Заблокировать
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => selectedUser && toggleAdmin(selectedUser, true)}
+                  >
+                    Сделать админом
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => selectedUser && toggleAdmin(selectedUser, false)}
+                  >
+                    Убрать права админа
+                  </button>
+
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => selectedUser && deleteUser(selectedUser)}
+                  >
+                    Удалить пользователя
+                  </button>
+                </div>
+                )}
+
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>Информация</div>
+                <div className="card p-2" style={{ marginBottom: 12 }}>
+                  {selectedUser ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div><b>Логин:</b> {selectedUser.username ?? "-"}</div>
+                      <div><b>Email:</b> {selectedUser.email ?? "-"}</div>
+                      <div><b>Статус:</b> {selectedUser.is_active === false ? "Неактивен" : (selectedUser.is_active ? "Активен" : "-")}</div>
+                      <div><b>Админ:</b> {selectedUser.is_admin || selectedUser.is_staff ? "Да" : "Нет"}</div>
+                    </div>
+                  ) : (
+                    <div className="muted">Выберите пользователя в левой колонке</div>
+                  )}
+                </div>
+
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>Пример содержания (быстрый просмотр)</div>
+                <div className="muted" style={{ fontSize: 13 }}>
+                  Нажмите «Просмотреть хранилище», чтобы открыть подробное представление хранилища пользователя.
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
       </div>
     </div>
   );

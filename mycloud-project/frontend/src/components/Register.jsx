@@ -49,15 +49,67 @@ export default function Register() {
   };
 
   return (
-    <div className="container mx-auto p-6 max-w-md">
-      <div className="bg-white shadow rounded p-6">
-        <h2 className="text-xl font-semibold mb-4">Регистрация</h2>
-        <form onSubmit={handle} className="flex flex-col gap-3">
-          <input className="border p-2 rounded" value={username} onChange={(e)=>setUsername(e.target.value)} placeholder="Логин" />
-          <input className="border p-2 rounded" value={full_name} onChange={(e)=>setFullName(e.target.value)} placeholder="ФИО" />
-          <input className="border p-2 rounded" value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="Email" />
-          <input type="password" className="border p-2 rounded" value={password} onChange={(e)=>setPassword(e.target.value)} placeholder="Пароль" />
-          <button disabled={loading} className="bg-sky-600 text-white p-2 rounded">{ loading ? "Регистрация..." : "Зарегистрироваться" }</button>
+    <div className="container" style={{minHeight:"70vh", display:"flex", alignItems:"center", justifyContent:"center"}}>
+      <div className="card" style={{position:"relative", zIndex:9999, maxWidth:520, width:"100%", padding:24}}>
+        <div className="card-title">
+          <div style={{fontSize:20, fontWeight:700}}>Регистрация</div>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (typeof handleRegister === "function") return handleRegister(e);
+            if (typeof submitRegister === "function") return submitRegister(e);
+            if (typeof onRegister === "function") return onRegister(e);
+            return null;
+          }}
+          style={{display:"flex", flexDirection:"column", gap:12, marginTop:8}}
+        >
+          <div>
+            <label className="label">Имя</label>
+            {(() => {
+              const v = (typeof name !== "undefined" ? name : undefined);
+              const setter = (typeof setName === "function" ? setName : null);
+              const common = { className: "input", placeholder: "Ваше имя", style: { pointerEvents: "auto" } };
+
+              if (setter) {
+                return <input {...common} value={typeof v !== "undefined" && v !== null ? v : ""} onChange={(ev) => setter(ev.target.value)} />;
+              }
+              return <input {...common} defaultValue={typeof v !== "undefined" && v !== null ? v : ""} />;
+            })()}
+          </div>
+
+          <div>
+            <label className="label">Email</label>
+            {(() => {
+              const v = (typeof email !== "undefined" ? email : undefined);
+              const setter = (typeof setEmail === "function" ? setEmail : null);
+              const common = { className: "input", placeholder: "you@example.com", style: { pointerEvents: "auto" } };
+
+              if (setter) {
+                return <input {...common} value={typeof v !== "undefined" && v !== null ? v : ""} onChange={(ev) => setter(ev.target.value)} />;
+              }
+              return <input {...common} defaultValue={typeof v !== "undefined" && v !== null ? v : ""} />;
+            })()}
+          </div>
+
+          <div>
+            <label className="label">Пароль</label>
+            {(() => {
+              const v = (typeof password !== "undefined" ? password : undefined);
+              const setter = (typeof setPassword === "function" ? setPassword : null);
+              const common = { className: "input", type: "password", placeholder: "Придумайте пароль", style: { pointerEvents: "auto" } };
+
+              if (setter) {
+                return <input {...common} value={typeof v !== "undefined" && v !== null ? v : ""} onChange={(ev) => setter(ev.target.value)} />;
+              }
+              return <input {...common} defaultValue={typeof v !== "undefined" && v !== null ? v : ""} />;
+            })()}
+          </div>
+
+          <div style={{display:"flex", justifyContent:"flex-end", gap:8}}>
+            <button className="btn btn-primary" type="submit">Зарегистрироваться</button>
+          </div>
         </form>
       </div>
     </div>

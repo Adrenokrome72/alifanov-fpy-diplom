@@ -24,6 +24,7 @@ export default function NavBar() {
       const used = Number(e?.detail?.used || 0);
       setLocalUsed(used);
     }
+
     window.addEventListener("mycloud:usage", onUsage);
     return () => window.removeEventListener("mycloud:usage", onUsage);
   }, []);

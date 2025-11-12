@@ -128,16 +128,29 @@ export default function FileManager() {
     const onChange = async () => {
       if (ownerMode) {
         try {
-          const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/?parent=${currentFolder ?? ""}`);
+          const storage = await apiFetch(
+            `/api/admin-users/${ownerMode}/storage/?parent=${currentFolder ?? ""}`
+          );
           setLocalFiles(storage.files || []);
           setLocalFolders(storage.folders || []);
-        } catch (e) {}
+        } catch (e) {
+          /* intentionally ignore or log if you want */
+        }
       } else {
-        try { await dispatch(fetchFiles({ folder: currentFolder ?? null })).unwrap(); } catch (e) {}
-        try { await dispatch(fetchFolders({ parent: currentFolder ?? null })).unwrap(); } catch (e) {}
-        try { await dispatch(fetchCurrentUser()).unwrap(); } catch(e){}
+        try {
+          await dispatch(fetchFiles({ folder: currentFolder ?? null })).unwrap();
+        } catch (e) { /* ignore */ }
+
+        try {
+          await dispatch(fetchFolders({ parent: currentFolder ?? null })).unwrap();
+        } catch (e) { /* ignore */ }
+
+        try {
+          await dispatch(fetchCurrentUser()).unwrap();
+        } catch (e) { /* ignore */ }
       }
     };
+
     window.addEventListener("mycloud:content-changed", onChange);
     return () => window.removeEventListener("mycloud:content-changed", onChange);
   }, [dispatch, ownerMode, currentFolder]);

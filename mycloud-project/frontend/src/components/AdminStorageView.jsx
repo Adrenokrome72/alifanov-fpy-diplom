@@ -1,179 +1,167 @@
-// frontend/src/components/AdminStorageView.jsx
-import React, { useState, useEffect } from 'react';
-import { useParams } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import FolderTree from "./FolderTree";
+import FileDetails from "./FileDetails";
+import CreateFolderTile from "./CreateFolderTile";
+import apiFetch from "../api";
+import { showToast } from "../utils/toast";
+import formatBytes from "../utils/formatBytes";
 
-// Рекурсивный компонент для дерева папок
-const FolderTree = ({ folders, onFolderClick, currentFolderId, level = 0 }) => {
-  if (!folders || folders.length === 0) return null;
+export default function AdminStorageView() {
+  const navigate = useNavigate();
+  const params = useParams();
+  const location = useLocation();
+  const routeUid = params?.uid ?? (location.state && location.state.user && (location.state.user.id ?? location.state.user.pk));
+  const [uid] = useState(routeUid);
 
-  return (
-    <div className="folder-tree" style={{ marginLeft: level * 20 }}>
-      {folders.map(folder => (
-        <div key={folder.id} className="tree-node">
-          <div 
-            className={`tree-folder ${currentFolderId === folder.id ? 'active' : ''}`}
-            onClick={() => onFolderClick(folder)}
-          >
-            {folder.children && folder.children.length > 0 ? '📂' : '📁'} {folder.name}
-          </div>
-          {/* Рекурсивно отображаем детей */}
-          {folder.children && folder.children.length > 0 && (
-            <FolderTree 
-              folders={folder.children} 
-              onFolderClick={onFolderClick}
-              currentFolderId={currentFolderId}
-              level={level + 1}
-            />
-          )}
-        </div>
-      ))}
-    </div>
-  );
-};
+  const [foldersAll, setFoldersAll] = useState([]); // static tree
+  const [currentFolder, setCurrentFolder] = useState(null); // currently viewed folder id
+  const [displayFolders, setDisplayFolders] = useState([]); // folders for currentFolder (children)
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
 
-// Вспомогательная функция
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
-
-// Основной компонент админского просмотра
-const AdminStorageView = () => {
-  const { userId } = useParams();
-  const [storageTree, setStorageTree] = useState(null);
-  const [currentFolder, setCurrentFolder] = useState(null);
-  const [currentContents, setCurrentContents] = useState({ folders: [], files: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // Загружаем полное дерево при монтировании
+  // load full folder tree initially (if API provides)
   useEffect(() => {
-    // Проверяем, что userId валидный
-    if (!userId || userId === 'undefined' || userId === 'null' || isNaN(parseInt(userId))) {
-      setError(`Invalid user ID: ${userId}`);
-      setLoading(false);
-      return;
-    }
-    fetchStorageTree();
-  }, [userId]);
-
-  const fetchStorageTree = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`/api/admin-users/${userId}/storage_tree/`);
-      if (response.ok) {
-        const data = await response.json();
-        setStorageTree(data);
-        setCurrentContents({
-          folders: data.root_folders || [],
-          files: data.root_files || []
-        });
-      } else {
-        throw new Error('Failed to fetch storage tree');
+    if (!uid) return;
+    let mounted = true;
+    const loadAll = async () => {
+      try {
+        const res = await apiFetch(`/api/admin-users/${uid}/storage/`);
+        // If API returns folders array representing full tree - use it as static tree
+        const all = Array.isArray(res.folders) ? res.folders : (res.all_folders || []);
+        if (mounted && all && all.length) setFoldersAll(all);
+        // Also set display folders and files from response root
+        const df = Array.isArray(res.folders) ? res.folders : (res.folders || []);
+        const fs = Array.isArray(res.files) ? res.files : (res.files || []);
+        if (mounted) {
+          setDisplayFolders(df || []);
+          setFiles(fs || []);
+        }
+      } catch (e) {
+        console.error("AdminStorageView loadAll error", e);
+        try { showToast && showToast("Не удалось загрузить хранилище пользователя", { type: "error" }); } catch {}
       }
-    } catch (error) {
-      console.error('Error fetching storage tree:', error);
-      setError('Error loading storage data');
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+    loadAll();
+    return () => { mounted = false; };
+  }, [uid]);
 
-  const fetchFolderContents = async (folderId) => {
+  // load content for given parent folder (when navigating)
+  const loadForFolder = async (parentId) => {
+    if (!uid) return;
+    setLoading(true);
     try {
-      const response = await fetch(`/api/admin-users/${userId}/folder_contents/?folder_id=${folderId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setCurrentFolder(data.folder);
-        setCurrentContents({
-          folders: data.children || [],
-          files: data.files || []
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching folder contents:', error);
+      const res = await apiFetch(`/api/admin-users/${uid}/storage/?parent=${parentId ?? ""}`);
+      const df = Array.isArray(res.folders) ? res.folders : (res.folders || []);
+      const fs = Array.isArray(res.files) ? res.files : (res.files || []);
+      setDisplayFolders(df || []);
+      setFiles(fs || []);
+      setSelectedFile(null);
+      setLoading(false);
+    } catch (e) {
+      setLoading(false);
+      console.error("loadForFolder error", e);
+      try { showToast && showToast("Не удалось загрузить содержимое папки", { type: "error" }); } catch {}
     }
   };
 
-  const handleFolderClick = (folder) => {
-    fetchFolderContents(folder.id);
+  // handle clicking folder in main area to drill into it
+  const handleOpenFolder = (folder) => {
+    const fid = folder.id ?? folder.pk ?? folder.name;
+    setCurrentFolder(fid);
+    loadForFolder(fid);
   };
 
-  const handleBackToRoot = () => {
-    setCurrentFolder(null);
-    if (storageTree) {
-      setCurrentContents({
-        folders: storageTree.root_folders || [],
-        files: storageTree.root_files || []
-      });
-    }
+  // navigate back to parent (find parent in foldersAll)
+  const handleBack = () => {
+    if (!currentFolder) return;
+    const parent = (foldersAll || []).find(f => (f.id ?? f.pk) === currentFolder)?.parent ?? null;
+    setCurrentFolder(parent || null);
+    loadForFolder(parent || "");
   };
 
-  if (error) return <div>Error: {error}</div>;
-  if (loading) return <div>Loading...</div>;
-  if (!storageTree) return <div>Error loading storage</div>;
+  const openFile = (file) => {
+    if (!file) return;
+    const url = file.download_url || file.url || file.preview_url || file.link;
+    if (url) return window.open(url, "_blank", "noopener");
+    try { showToast && showToast("Нет прямой ссылки на файл", { type: "error" }); } catch {}
+  };
 
   return (
-    <div className="admin-storage-view">
-      <div className="storage-header">
-        <h2>Storage of {storageTree.user_info?.username}</h2>
-        {currentFolder && (
-          <button onClick={handleBackToRoot} className="back-button">
-            Back to Root
-          </button>
-        )}
-      </div>
-
-      <div className="storage-layout">
-        {/* Левая панель - дерево навигации */}
-        <div className="tree-panel">
-          <h3>Folder Tree</h3>
-          <FolderTree 
-            folders={storageTree.root_folders} 
-            onFolderClick={handleFolderClick}
-            currentFolderId={currentFolder?.id}
-          />
+    <div className="app-shell">
+      <div className="page container" role="main" style={{ paddingTop: 12 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+          <button className="btn btn-ghost" onClick={() => navigate(-1)}>← Назад</button>
+          <div style={{ fontWeight: 700 }}>{selectedFile ? selectedFile.name : `Хранилище пользователя ${uid ?? ""}`}</div>
         </div>
 
-        {/* Правая панель - содержимое текущей папки */}
-        <div className="content-panel">
-          <div className="current-path">
-            <strong>Current Path:</strong> {currentFolder ? currentFolder.name : 'Root'}
-          </div>
-          
-          {/* Отображение папок */}
-          <div className="folders-section">
-            <h4>Folders</h4>
-            {currentContents.folders.map(folder => (
-              <div 
-                key={folder.id} 
-                className="folder-item"
-                onClick={() => handleFolderClick(folder)}
-              >
-                📁 {folder.name}
-              </div>
-            ))}
-            {currentContents.folders.length === 0 && <div>No folders</div>}
-          </div>
+        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 360px", gap: 12 }}>
+          <aside className="folder-tree card" aria-label="Folders" style={{ padding: 12, height: "min(70vh, 80vh)", overflow: "auto" }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Папки</div>
+            {/* Render static folder tree from foldersAll; highlight currentFolder */}
+            <FolderTree
+              folders={foldersAll.length ? foldersAll : displayFolders}
+              onOpen={() => {}}
+              onSelect={(f) => {
+                // when selecting from tree, set currentFolder and load its children in main area
+                const fid = f.id ?? f.pk ?? f.name;
+                setCurrentFolder(fid);
+                loadForFolder(fid);
+              }}
+              currentFolder={currentFolder}
+            />
+          </aside>
 
-          {/* Отображение файлов */}
-          <div className="files-section">
-            <h4>Files</h4>
-            {currentContents.files.map(file => (
-              <div key={file.id} className="file-item">
-                📄 {file.original_name} ({formatFileSize(file.size)})
+          <main className="main">
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 700 }}>Файлы</div>
+                <div className="muted">{loading ? "Загрузка..." : `${files.length} файлов`}</div>
               </div>
-            ))}
-            {currentContents.files.length === 0 && <div>No files</div>}
-          </div>
+
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+                  <button className="btn btn-primary" disabled>Загрузить</button>
+                  <div style={{ marginLeft: "auto" }}>
+                    <button className="btn btn-ghost" onClick={handleBack} disabled={!currentFolder}>Назад</button>
+                  </div>
+                </div>
+
+                <div className="file-grid">
+                  {/* include CreateFolderTile visually but disabled */}
+                  <CreateFolderTile readOnly />
+
+                  {files && files.length ? files.map(file => {
+                    const fid = file.id ?? file.pk ?? file.name;
+                    return (
+                      <div key={fid} className="file-tile">
+                        <div className="file-icon">📄</div>
+                        <div className="file-name" title={file.name}>{file.name}</div>
+                        <div className="file-meta muted">{typeof formatBytes === "function" ? formatBytes(file.size) : file.size}</div>
+
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button className="btn btn-ghost btn-sm" onClick={() => openFile(file)}>Открыть</button>
+                          <button className="btn btn-ghost btn-sm" disabled>Удалить</button>
+                          <button className="btn btn-ghost btn-sm" disabled>Переименовать</button>
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="card p-3 center">Файлов нет</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </main>
+
+          <aside className="card" style={{ padding: 12, minHeight: 120, maxHeight: "80vh", overflow: "auto" }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Информация о файле</div>
+            <FileDetails file={selectedFile} onClose={() => setSelectedFile(null)} readOnly={true} />
+            {!selectedFile && <div className="muted">Выберите файл для просмотра</div>}
+          </aside>
         </div>
       </div>
     </div>
   );
-};
-
-export default AdminStorageView;
+}
