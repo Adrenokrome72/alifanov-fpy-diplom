@@ -1,99 +1,104 @@
-// frontend/src/components/FolderTree.jsx
-import React from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { useState as useLocalState } from 'react';
 
-function buildTree(flat) {
-  const map = new Map();
-  flat.forEach(f => map.set(f.id, { ...f, children: [] }));
+function normalizeId(v){ if (v===null || v===undefined) return null; return String(v); }
+
+function buildTree(flat){
+  const nodes = new Map();
+  (flat||[]).forEach(f => {
+    const id = normalizeId(f.id ?? f.pk ?? f.name);
+    nodes.set(id, { ...f, id, children: [] });
+  });
   const roots = [];
-  map.forEach(node => {
-    if (node.parent == null) roots.push(node);
-    else {
-      const p = map.get(node.parent);
-      if (p) p.children.push(node);
-      else roots.push(node);
+  nodes.forEach((node) => {
+    const rawParent = node.parent ?? node.parent_id ?? null;
+    const parentId = normalizeId(rawParent);
+    if (!parentId || !nodes.has(parentId)) {
+      roots.push(node);
+    } else {
+      const p = nodes.get(parentId);
+      p.children = p.children || [];
+      p.children.push(node);
     }
   });
-  const sortRec = (nodes) => {
-    nodes.sort((a,b)=>a.name.localeCompare(b.name));
-    nodes.forEach(n=> sortRec(n.children));
-  };
-  sortRec(roots);
   return roots;
 }
 
-function Node({ node, level=0, onOpen, onSelect, currentFolder, onDragOver, onDrop }) {
-  const [collapsed, setCollapsed] = React.useState(false);
-  
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    if (onDragOver) onDragOver(node.id);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    if (onDrop) onDrop(node.id);
-  };
-
-  return (
-    <div style={{ paddingLeft: level * 12, marginBottom:6 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-        <button className="btn-min" onClick={(e)=>{ e.stopPropagation(); setCollapsed(c=>!c); }}>{collapsed ? "+" : "-"}</button>
-        <div 
-          style={{ cursor:"pointer", flex:1 }} 
-          onClick={()=>onSelect(node)} 
-          onDoubleClick={()=>onOpen(node.id)}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-        >
-          <div style={{ fontWeight: currentFolder===node.id ? 700 : 500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{node.name}</div>
-          { node.children && node.children.length>0 && <div style={{ fontSize:12, color:"#6b7280" }}>{node.children.length} подпапок</div> }
-        </div>
-      </div>
-      {!collapsed && node.children && node.children.map(c => (
-        <Node 
-          key={c.id} 
-          node={c} 
-          level={level+1} 
-          onOpen={onOpen} 
-          onSelect={onSelect} 
-          currentFolder={currentFolder}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
-        />
-      ))}
-    </div>
-  );
+function findPathTo(rootNodes, targetId){
+  const path = [];
+  function dfs(node, acc){
+    if (!node) return false;
+    const id = String(node.id);
+    const newAcc = acc.concat([id]);
+    if (id === targetId) { path.push(...newAcc); return true; }
+    for (const c of node.children || []){
+      if (dfs(c, newAcc)) return true;
+    }
+    return false;
+  }
+  for (const r of rootNodes){
+    if (dfs(r, [])) break;
+  }
+  return path;
 }
 
-// Основной компонент дерева папок для FileManager
-const FolderTree = ({ folders, currentFolder, onOpen, onSelect, onDragOver, onDrop }) => {
-  const treeData = buildTree(folders || []);
+const TreeNode = ({node, level, onSelect, onOpen, currentFolder, expandedSet, toggleExpand, onDragOver, onDrop}) => {
+  const id = String(node.id);
+  const isActive = currentFolder && String(currentFolder) === id;
+  const hasChildren = (node.children && node.children.length > 0);
+  const isExpanded = expandedSet.has(id);
 
-  const handleRootDragOver = (e) => {
-    e.preventDefault();
-    if (onDragOver) onDragOver(null);
-  };
-
-  const handleRootDrop = (e) => {
-    e.preventDefault();
-    if (onDrop) onDrop(null);
+  const handleClick = () => {
+    if (onSelect) onSelect(node);
   };
 
   return (
-    <div onDragOver={handleRootDragOver} onDrop={handleRootDrop}>
-      {treeData.map(node => (
-        <Node 
-          key={node.id} 
-          node={node} 
-          onOpen={onOpen} 
-          onSelect={onSelect} 
-          currentFolder={currentFolder}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
-        />
-      ))}
+    <div style={{paddingLeft: level * 12, display: 'flex', flexDirection: 'column'}}>
+      <div style={{display: 'flex', alignItems: 'center', gap:8}}>
+        {hasChildren ? (
+          <button className="btn btn-ghost btn-sm" onClick={() => toggleExpand(id)} aria-label={isExpanded ? 'Collapse' : 'Expand'}>
+            {isExpanded ? '−' : '+'}
+          </button>
+        ) : <div style={{width:28}} />}
+        <div
+          style={{flex:1, cursor:'pointer', display:'flex', alignItems:'center'}}
+          onClick={handleClick}
+          onDragOver={onDragOver ? (e) => onDragOver(id)(e) : undefined}
+          onDrop={onDrop ? (e) => onDrop(id)(e) : undefined}
+        >
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <div>📁</div>
+            <div style={{fontWeight: isActive ? 700 : 500, color: isActive ? undefined : '#111'}}>{node.name || node.title || node.id}</div>
+          </div>
+        </div>
+      </div>
+
+      {hasChildren && isExpanded && (
+        <div>
+          {node.children.map(ch => <TreeNode key={ch.id} node={ch} level={level+1} onSelect={onSelect} onOpen={onOpen} currentFolder={currentFolder} expandedSet={expandedSet} toggleExpand={toggleExpand} onDragOver={onDragOver} onDrop={onDrop} />)}
+        </div>
+      )}
     </div>
   );
 };
 
-export default FolderTree;
+export default function FolderTree({ folders = [], currentFolder = null, onSelect, onOpen, onDragOver, onDrop }){
+  const tree = useMemo(() => buildTree(folders), [folders]);
+  const [expandedSet, setExpandedSet] = useState(new Set());
+
+  const toggleExpand = (id) => {
+    setExpandedSet(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div style={{display:'flex', flexDirection:'column', gap:6}}>
+      {tree.length === 0 ? <div className="muted">Папок нет</div> : tree.map(node => (
+        <TreeNode key={node.id} node={node} level={0} onSelect={onSelect} onOpen={onOpen} currentFolder={currentFolder} expandedSet={expandedSet} toggleExpand={toggleExpand} onDragOver={onDragOver} onDrop={onDrop} />
+      ))}
+    </div>
+  );
+}

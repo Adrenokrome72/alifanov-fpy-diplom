@@ -43,11 +43,10 @@ module.exports = {
     hot: true,
     proxy: [
       {
-        context: ['/api', '/auth'], // любые префиксы, которые нужно проксировать
+        context: ['/api', '/auth'],
         target: 'http://localhost:8000',
         changeOrigin: true,
         secure: false,
-        // optional: logLevel: 'debug'
       }
     ],
   },

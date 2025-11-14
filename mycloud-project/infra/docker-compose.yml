@@ -12,12 +12,40 @@ services:
     ports:
       - "${DB_PORT}:5432"
     volumes:
-      - db_data:/postgresql/data
+      - db_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: ./infra/dockerfiles/backend.dockerfile
+    container_name: mycloud_backend
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ../backend/backend/media:/app/backend/media
+      - ../backend/staticfiles:/app/staticfiles
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: ./infra/dockerfiles/frontend.dockerfile
+    container_name: mycloud_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
 
 volumes:
   db_data:

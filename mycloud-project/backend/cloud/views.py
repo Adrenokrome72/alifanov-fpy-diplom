@@ -2,6 +2,7 @@ import os
 import tempfile
 import zipfile
 import secrets
+import logging
 
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -48,7 +49,7 @@ class RegisterView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         user = serializer.save()
-        return Response({"detail": "user created", "username": user.username}, status=status.HTTP_201_CREATED)
+        return Response({"detail": "пользователь создан", "username": user.username}, status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):
@@ -61,7 +62,7 @@ class LoginView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         user = serializer.validated_data["user"]
         django_login(request, user)
-        return Response({"detail": "logged in", "username": user.username}, status=status.HTTP_200_OK)
+        return Response({"detail": "вошёл в систему", "username": user.username}, status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):
@@ -69,7 +70,7 @@ class LogoutView(APIView):
 
     def post(self, request, *args, **kwargs):
         django_logout(request)
-        return Response({"detail": "logged out"}, status=status.HTTP_200_OK)
+        return Response({"detail": "вышел из системы"}, status=status.HTTP_200_OK)
 
 
 class FolderViewSet(viewsets.ModelViewSet):
@@ -92,55 +93,42 @@ class FolderViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         if self.request.user.is_staff:
-            # Получаем данные из запроса
             data = serializer.validated_data
-            
-            # Для папки: проверяем parent, если он указан
             if hasattr(self, 'get_owner_from_data'):
                 owner_id = self.get_owner_from_data(data)
             else:
-                # По умолчанию считаем, что владелец - текущий пользователь
                 owner_id = self.request.user.id
-            
-            # Разрешаем если:
-            # 1. Админ создает объект для себя ИЛИ
-            # 2. Parent принадлежит админу (если указан)
             if owner_id != self.request.user.id:
                 # Проверяем parent для папок
                 parent = data.get('parent')
                 if parent and parent.owner.id == self.request.user.id:
-                    # Разрешаем - parent принадлежит админу
                     pass
                 else:
-                    # Проверяем folder для файлов
                     folder = data.get('folder')
                     if folder and folder.owner.id == self.request.user.id:
-                        # Разрешаем - folder принадлежит админу
                         pass
                     else:
-                        raise PermissionDenied("Admin cannot create items for other users")
+                        raise PermissionDenied("Администратор не может выполнить это действие")
         
         serializer.save(owner=self.request.user)
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-        # Администратор не может изменять чужие данные
         if request.user.is_staff and instance.owner != request.user:
-            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Только чтение в режиме администратора"}, status=status.HTTP_403_FORBIDDEN)
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        # Администратор не может удалять чужие данные
         if request.user.is_staff and instance.owner != request.user:
-            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Только чтение в режиме администратора"}, status=status.HTTP_403_FORBIDDEN)
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"])
     def share(self, request, pk=None):
         folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         if not folder.share_token:
             folder.share_token = secrets.token_urlsafe(16)
             folder.save(update_fields=["share_token"])
@@ -151,10 +139,8 @@ class FolderViewSet(viewsets.ModelViewSet):
     def download_zip(self, request, pk=None):
         folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-        # collect all files inside folder (recursive)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         files_qs = UserFile.objects.filter(folder__in=self._collect_folder_and_children_ids(folder))
-        # create temp zip
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
         try:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -176,7 +162,6 @@ class FolderViewSet(viewsets.ModelViewSet):
                 pass
 
     def _collect_folder_and_children_ids(self, folder):
-        # BFS or DFS to collect child folder ids
         ids = [folder.id]
         stack = [folder]
         while stack:
@@ -191,10 +176,10 @@ class FolderViewSet(viewsets.ModelViewSet):
     def rename(self, request, pk=None):
         folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         name = request.data.get("name")
         if not name:
-            return Response({"detail": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "имя обязательно"}, status=status.HTTP_400_BAD_REQUEST)
         folder.name = name
         folder.save(update_fields=["name"])
         return Response(self.get_serializer(folder).data)
@@ -203,7 +188,7 @@ class FolderViewSet(viewsets.ModelViewSet):
     def move(self, request, pk=None):
         folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         parent_id = request.data.get("parent")
         if parent_id in (None, "", "null"):
             folder.parent = None
@@ -214,7 +199,7 @@ class FolderViewSet(viewsets.ModelViewSet):
         except Folder.DoesNotExist:
             return Response({"detail": "Target parent not found"}, status=status.HTTP_400_BAD_REQUEST)
         if not (request.user.is_staff or p.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         folder.parent = p
         folder.save(update_fields=["parent"])
         return Response(self.get_serializer(folder).data)
@@ -223,14 +208,12 @@ class FolderViewSet(viewsets.ModelViewSet):
     def purge(self, request, pk=None):
         folder = self.get_object()
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-        # delete files and subfolders recursively
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         ids = self._collect_folder_and_children_ids(folder)
         files = UserFile.objects.filter(folder_id__in=ids)
         total_size = files.aggregate(sum=Sum("size"))["sum"] or 0
         files.delete()
         Folder.objects.filter(id__in=ids).delete()
-        # Не пытаемся присваивать profile.used_bytes — используем вычисление при запросе
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -243,64 +226,49 @@ class UserFileViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         folder_q = self.request.query_params.get("folder")
-        qs = UserFile.objects.filter(owner=user)  # Только свои файлы
-        
-        if folder_q:
+        qs = UserFile.objects.filter(owner=user)
+
+        if folder_q is not None:
             if folder_q.lower() in ("null", "none", ""):
                 qs = qs.filter(folder__isnull=True)
             else:
                 qs = qs.filter(folder_id=folder_q)
-        
+
         return qs
 
     def perform_create(self, serializer):
         if self.request.user.is_staff:
-            # Получаем данные из запроса
             data = serializer.validated_data
-            
-            # Для папки: проверяем parent, если он указан
             if hasattr(self, 'get_owner_from_data'):
                 owner_id = self.get_owner_from_data(data)
             else:
-                # По умолчанию считаем, что владелец - текущий пользователь
                 owner_id = self.request.user.id
-            
-            # Разрешаем если:
-            # 1. Админ создает объект для себя ИЛИ
-            # 2. Parent принадлежит админу (если указан)
             if owner_id != self.request.user.id:
-                # Проверяем parent для папок
                 parent = data.get('parent')
                 if parent and parent.owner.id == self.request.user.id:
-                    # Разрешаем - parent принадлежит админу
                     pass
                 else:
-                    # Проверяем folder для файлов
                     folder = data.get('folder')
                     if folder and folder.owner.id == self.request.user.id:
-                        # Разрешаем - folder принадлежит админу
                         pass
                     else:
-                        raise PermissionDenied("Admin cannot create items for other users")
+                        raise PermissionDenied("Админ не может создавать файлы у других пользователей")
         
         serializer.save(owner=self.request.user)
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-        # Администратор не может изменять чужие данные
         if request.user.is_staff and instance.owner != request.user:
-            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Только чтение"}, status=status.HTTP_403_FORBIDDEN)
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        # Администратор не может удалять чужие данные
         if request.user.is_staff and instance.owner != request.user:
-            return Response({"detail": "Read-only access in admin view"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Только чтение"}, status=status.HTTP_403_FORBIDDEN)
         return super().destroy(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
-        # robust creation for multipart
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
             return Response({"file": ["No file provided"]}, status=status.HTTP_400_BAD_REQUEST)
@@ -311,22 +279,20 @@ class UserFileViewSet(viewsets.ModelViewSet):
             try:
                 folder = Folder.objects.get(pk=folder_id)
             except Folder.DoesNotExist:
-                return Response({"detail": "Target folder not found"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "Указанная папка не найдена"}, status=status.HTTP_400_BAD_REQUEST)
             if not (request.user.is_staff or folder.owner == request.user):
-                return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
 
         comment = request.data.get("comment", "")
         original_name = request.data.get("original_name", uploaded_file.name)
 
-        # quota check
         profile = getattr(request.user, "profile", None)
         size = getattr(uploaded_file, "size", None)
         if profile and size is not None:
             used = profile.get_used_bytes()
             if profile.quota is not None and (used + size > profile.quota):
-                return Response({"detail": "Quota exceeded"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "Квота превышена"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create object and save file
         userfile = UserFile(
             owner=request.user,
             folder=folder,
@@ -343,10 +309,10 @@ class UserFileViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def share(self, request, pk=None):
-        """Создаёт или возвращает share token для файла"""
+        # Создаёт или возвращает share token для файла
         obj = self.get_object()
         if not (request.user.is_staff or obj.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         if not obj.share_token:
             obj.share_token = secrets.token_urlsafe(16)
             obj.save(update_fields=["share_token"])
@@ -357,9 +323,8 @@ class UserFileViewSet(viewsets.ModelViewSet):
     def download(self, request, pk=None):
         obj = self.get_object()
         if not (request.user.is_staff or obj.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         try:
-            # increment download_count and update last_downloaded_at
             try:
                 obj.download_count = (obj.download_count or 0) + 1
                 obj.last_downloaded_at = timezone.now()
@@ -374,14 +339,12 @@ class UserFileViewSet(viewsets.ModelViewSet):
     def rename(self, request, pk=None):
         obj = self.get_object()
         if not (request.user.is_staff or obj.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         new_name = request.data.get("name")
         if not new_name:
-            return Response({"detail": "name required"}, status=status.HTTP_400_BAD_REQUEST)
-        # ensure extension preserved: extract ext from original_name
+            return Response({"detail": "имя обязательно"}, status=status.HTTP_400_BAD_REQUEST)
         if "." in obj.original_name:
             ext = obj.original_name.split(".")[-1]
-            # if user provided extension, strip it
             if "." in new_name:
                 new_name = new_name.rsplit(".", 1)[0]
             obj.original_name = f"{new_name}.{ext}"
@@ -397,7 +360,7 @@ class UserFileViewSet(viewsets.ModelViewSet):
     def move(self, request, pk=None):
         obj = self.get_object()
         if not (request.user.is_staff or obj.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         folder_id = request.data.get("folder")
         if folder_id in (None, "", "null"):
             obj.folder = None
@@ -408,7 +371,7 @@ class UserFileViewSet(viewsets.ModelViewSet):
         except Folder.DoesNotExist:
             return Response({"detail": "Target folder not found"}, status=status.HTTP_400_BAD_REQUEST)
         if not (request.user.is_staff or target.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         obj.folder = target
         obj.save(update_fields=["folder"])
         return Response(self.get_serializer(obj).data)
@@ -418,12 +381,11 @@ class UserFileViewSet(viewsets.ModelViewSet):
         """Удаление файла"""
         obj = self.get_object()
         if not (request.user.is_staff or obj.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         size = obj.size or 0
         owner_profile = getattr(obj.owner, "profile", None)
         obj.file.delete(save=False)
         obj.delete()
-        # не трогаем used_bytes как поле — профиль будет отражать актуальное значение через агрегацию
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -437,9 +399,8 @@ class AdminUserViewSet(viewsets.ViewSet):
 
     def retrieve(self, request, pk=None):
         folder = self.get_object()
-        # Разрешаем доступ администратору к любым папкам
         if not (request.user.is_staff or folder.owner == request.user):
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Запрещено"}, status=status.HTTP_403_FORBIDDEN)
         
         # get children folders
         children = Folder.objects.filter(parent=folder).order_by("name")
@@ -470,11 +431,11 @@ class AdminUserViewSet(viewsets.ViewSet):
             if quota < 0:
                 raise ValueError()
         except Exception:
-            return Response({"detail": "Invalid quota (expect integer bytes)"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Неверное значение"}, status=status.HTTP_400_BAD_REQUEST)
 
         profile.quota = quota
         profile.save(update_fields=["quota"])
-        return Response({"detail": "quota updated", "quota": profile.quota}, status=status.HTTP_200_OK)
+        return Response({"detail": "Квота изменена", "квота": profile.quota}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def set_admin(self, request, pk=None):
@@ -485,25 +446,23 @@ class AdminUserViewSet(viewsets.ViewSet):
         else:
             user.is_staff = False
         user.save(update_fields=["is_staff"])
-        return Response({"detail": "is_staff set", "is_staff": user.is_staff}, status=status.HTTP_200_OK)
+        return Response({"detail": "Администратор назначен", "is_staff": user.is_staff}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def toggle_active(self, request, pk=None):
         user = get_object_or_404(User, pk=pk)
         
-        # Получаем текущее состояние и инвертируем его
         current_status = user.is_active
         user.is_active = not current_status
         user.save(update_fields=["is_active"])
         
         return Response({
-            "detail": "User status updated", 
+            "detail": "Пользователь обновлен", 
             "is_active": user.is_active
         }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"])
     def storage(self, request, pk=None):
-        """Корневое хранилище пользователя (для обратной совместимости)"""
         user = get_object_or_404(User, pk=pk)
         folders = Folder.objects.filter(owner=user, parent__isnull=True).order_by("name")
         files = UserFile.objects.filter(owner=user, folder__isnull=True).order_by("-uploaded_at")
@@ -537,33 +496,20 @@ class AdminUserViewSet(viewsets.ViewSet):
                 files_qs = user.files.all()
                 files_qs.delete()
                 user.delete()
-            return Response({"detail": "user and files deleted"}, status=status.HTTP_200_OK)
+            return Response({"detail": "Пользователь и его файлы удалены"}, status=status.HTTP_200_OK)
         else:
             user.delete()
-            return Response({"detail": "user deleted"}, status=status.HTTP_200_OK)
+            return Response({"detail": "Пользователь удален"}, status=status.HTTP_200_OK)
         
     @action(detail=True, methods=["get"])
     def storage_tree(self, request, pk=None):
-        """Получить полное дерево папок пользователя для админ-просмотра"""
         user = get_object_or_404(User, pk=pk)
-        
-        def build_folder_tree(folder):
-            """Рекурсивно строим дерево папок"""
-            children = Folder.objects.filter(parent=folder, owner=user).order_by("name")
-            files = UserFile.objects.filter(folder=folder, owner=user).order_by("-uploaded_at")
-            
-            folder_data = FolderSerializer(folder, context={"request": request}).data
-            folder_data["children"] = [build_folder_tree(child) for child in children]
-            folder_data["files"] = UserFileSerializer(files, many=True, context={"request": request}).data
-            
-            return folder_data
-        
-        # Корневые папки
+
         root_folders = Folder.objects.filter(owner=user, parent__isnull=True).order_by("name")
         root_files = UserFile.objects.filter(owner=user, folder__isnull=True).order_by("-uploaded_at")
-        
+
         tree_data = {
-            "root_folders": [build_folder_tree(folder) for folder in root_folders],
+            "root_folders": FolderSerializer(root_folders, many=True, context={"request": request}).data,
             "root_files": UserFileSerializer(root_files, many=True, context={"request": request}).data,
             "user_info": {
                 "id": user.id,
@@ -571,31 +517,57 @@ class AdminUserViewSet(viewsets.ViewSet):
                 "full_name": getattr(user.profile, 'full_name', ''),
             }
         }
-        
+
         return Response(tree_data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"])
+    def folder_tree(self, request, pk=None):
+        user = get_object_or_404(User, pk=pk)
+        folders = Folder.objects.filter(owner=user).order_by("name")
+        def build_tree(flat_folders):
+            nodes = {}
+            roots = []
+            for folder in flat_folders:
+                nodes[folder.id] = {
+                    'id': folder.id,
+                    'name': folder.name,
+                    'parent': folder.parent_id if folder.parent else None,
+                    'children': []
+                }
+
+            for folder in flat_folders:
+                node = nodes[folder.id]
+                if node['parent']:
+                    if node['parent'] in nodes:
+                        nodes[node['parent']]['children'].append(node)
+                else:
+                    roots.append(node)
+
+            return roots
+
+        tree = build_tree(folders)
+        return Response(tree)
+
+    @action(detail=True, methods=["get"])
     def folder_contents(self, request, pk=None):
-        """Получить содержимое конкретной папки пользователя"""
         user = get_object_or_404(User, pk=pk)
         folder_id = request.query_params.get("folder_id")
-        
+
         if not folder_id:
             return Response({"detail": "folder_id parameter required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             folder = Folder.objects.get(id=folder_id, owner=user)
         except Folder.DoesNotExist:
             return Response({"detail": "Folder not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Получаем содержимое папки
+
         children = Folder.objects.filter(parent=folder, owner=user).order_by("name")
         files = UserFile.objects.filter(folder=folder, owner=user).order_by("-uploaded_at")
-        
+
         folder_data = FolderSerializer(folder, context={"request": request}).data
         children_data = FolderSerializer(children, many=True, context={"request": request}).data
         files_data = UserFileSerializer(files, many=True, context={"request": request}).data
-        
+
         return Response({
             "folder": folder_data,
             "children": children_data,
@@ -627,7 +599,6 @@ def external_download(request, token):
 
         folder = Folder.objects.filter(share_token=token).first()
         if folder:
-            # collect files recursively
             def collect_ids(folder):
                 ids = [folder.id]
                 stack = [folder]
@@ -660,13 +631,54 @@ def external_download(request, token):
     except Exception:
         pass
 
-    return Response({"detail": "Token not found"}, status=status.HTTP_404_NOT_FOUND)
+    return Response({"detail": "Токен не обнаружен"}, status=status.HTTP_404_NOT_FOUND)
 
 
 @ensure_csrf_cookie
 def csrf_token_view(request):
     # ensure_csrf_cookie гарантирует, что csrftoken cookie будет установлен
     return JsonResponse({"detail": "csrf cookie set"})
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def folder_tree_view(request):
+    user = request.user
+    folders = Folder.objects.filter(owner=user).order_by("name")
+
+    def build_tree(flat_folders):
+        nodes = {}
+        roots = []
+
+        for folder in flat_folders:
+            nodes[folder.id] = {
+                'id': folder.id,
+                'name': folder.name,
+                'parent': folder.parent_id if folder.parent else None,
+                'children': []
+            }
+
+        for folder in flat_folders:
+            node = nodes[folder.id]
+            if node['parent']:
+                if node['parent'] in nodes:
+                    nodes[node['parent']]['children'].append(node)
+            else:
+                roots.append(node)
+
+        return roots
+
+    tree = build_tree(folders)
+    return Response(tree)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def welcome_view(request):
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Request received: {request.method} {request.path}")
+    return Response({"message": "Welcome to the Django API Service!"})
 
 
 @api_view(["GET"])
@@ -680,7 +692,6 @@ def current_user_view(request):
     user = request.user
     profile = getattr(user, "profile", None)
 
-    # Compute used_bytes in a robust way by calling model helper if exists
     used_bytes = None
     if profile and hasattr(profile, "get_used_bytes"):
         try:
@@ -688,7 +699,6 @@ def current_user_view(request):
         except Exception:
             used_bytes = None
     else:
-        # fallback to aggregate on user's files
         try:
             used_bytes = int(user.files.aggregate(total=Sum("size"))["total"] or 0)
         except Exception:

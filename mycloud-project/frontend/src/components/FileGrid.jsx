@@ -1,4 +1,3 @@
-// frontend/src/components/FileGrid.jsx
 import React from "react";
 import formatBytes from "../utils/formatBytes";
 

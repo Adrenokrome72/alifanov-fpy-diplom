@@ -22,11 +22,10 @@ async function parseJSONOrText(resp) {
 }
 
 export default async function apiFetch(path, opts = {}) {
-  const base = ''; // if API prefix required, set here e.g. process.env.API_BASE
+  const base = '';
   const url = path.startsWith('http') ? path : (base + path);
   const headers = opts.headers ? { ...opts.headers } : {};
 
-  // JSON body -> stringify
   let body = opts.body;
   if (body && !(body instanceof FormData) && typeof body === 'object' && opts.method && opts.method.toUpperCase() !== 'GET') {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
@@ -40,7 +39,6 @@ export default async function apiFetch(path, opts = {}) {
     if (csrf) headers['X-CSRFToken'] = csrf;
   }
 
-  // credentials included to support session auth
   const resp = await fetch(url, {
     method,
     credentials: 'include',
@@ -49,17 +47,13 @@ export default async function apiFetch(path, opts = {}) {
   });
 
   if (resp.ok) {
-    // For endpoints returning files (attachment) we want to return resp (caller can handle)
     const disposition = resp.headers.get('content-disposition') || '';
     if (disposition.toLowerCase().includes('attachment')) {
-      // return raw response for download handlers
       return resp;
     }
-    // parse JSON or text
     const data = await parseJSONOrText(resp);
     return data;
   } else {
-    // parse error body if possible
     let data;
     try {
       data = await parseJSONOrText(resp);
@@ -71,9 +65,7 @@ export default async function apiFetch(path, opts = {}) {
   }
 }
 
-// Helper for posting FormData (file upload)
 export async function postForm(path, formData) {
-  // do not set Content-Type for FormData (browser will set boundary)
   const headers = {};
   const csrf = getCsrfToken();
   if (csrf) headers['X-CSRFToken'] = csrf;
@@ -93,5 +85,3 @@ export async function postForm(path, formData) {
     throw { status: resp.status, data };
   }
 }
-
-

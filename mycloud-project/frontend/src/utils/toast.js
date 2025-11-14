@@ -1,4 +1,3 @@
-// frontend/src/utils/toast.js
 export function showToast(message, opts = {}) {
   const detail = {
     message: String(message ?? ""),

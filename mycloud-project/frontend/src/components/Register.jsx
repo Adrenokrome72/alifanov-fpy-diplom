@@ -1,4 +1,3 @@
-// frontend/src/components/Register.jsx
 import React, { useState } from "react";
 import { useDispatch } from "react-redux";
 import { register } from "../features/authSlice";
@@ -12,6 +11,7 @@ export default function Register() {
   const [full_name, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [login, setLogin] = useState("");
   const [loading, setLoading] = useState(false);
 
   function formatFriendlyError(err) {
@@ -33,11 +33,11 @@ export default function Register() {
     return "Ошибка";
   }
 
-  const handle = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await dispatch(register({ username, full_name, email, password })).unwrap();
+      await dispatch(register({ username: login || username, full_name, email, password })).unwrap();
       showToast("Регистрация успешна", { type: "success" });
       navigate("/login");
     } catch (err) {
@@ -55,63 +55,61 @@ export default function Register() {
           <div style={{fontSize:20, fontWeight:700}}>Регистрация</div>
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (typeof handleRegister === "function") return handleRegister(e);
-            if (typeof submitRegister === "function") return submitRegister(e);
-            if (typeof onRegister === "function") return onRegister(e);
-            return null;
-          }}
-          style={{display:"flex", flexDirection:"column", gap:12, marginTop:8}}
-        >
+        <form onSubmit={handleSubmit} style={{display:"flex", flexDirection:"column", gap:12, marginTop:8}}>
           <div>
-            <label className="label">Имя</label>
-            {(() => {
-              const v = (typeof name !== "undefined" ? name : undefined);
-              const setter = (typeof setName === "function" ? setName : null);
-              const common = { className: "input", placeholder: "Ваше имя", style: { pointerEvents: "auto" } };
+            <label className="label">Логин</label>
+            <input
+              className="input"
+              placeholder="Ваш логин"
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              required
+            />
+          </div>
 
-              if (setter) {
-                return <input {...common} value={typeof v !== "undefined" && v !== null ? v : ""} onChange={(ev) => setter(ev.target.value)} />;
-              }
-              return <input {...common} defaultValue={typeof v !== "undefined" && v !== null ? v : ""} />;
-            })()}
+          <div>
+            <label className="label">Ваши Имя и Фамилия</label>
+            <input
+              className="input"
+              placeholder="Ваше полное имя и фамилия"
+              value={full_name}
+              onChange={(e) => setFullName(e.target.value)}
+            />
           </div>
 
           <div>
             <label className="label">Email</label>
-            {(() => {
-              const v = (typeof email !== "undefined" ? email : undefined);
-              const setter = (typeof setEmail === "function" ? setEmail : null);
-              const common = { className: "input", placeholder: "you@example.com", style: { pointerEvents: "auto" } };
-
-              if (setter) {
-                return <input {...common} value={typeof v !== "undefined" && v !== null ? v : ""} onChange={(ev) => setter(ev.target.value)} />;
-              }
-              return <input {...common} defaultValue={typeof v !== "undefined" && v !== null ? v : ""} />;
-            })()}
+            <input
+              className="input"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </div>
 
           <div>
             <label className="label">Пароль</label>
-            {(() => {
-              const v = (typeof password !== "undefined" ? password : undefined);
-              const setter = (typeof setPassword === "function" ? setPassword : null);
-              const common = { className: "input", type: "password", placeholder: "Придумайте пароль", style: { pointerEvents: "auto" } };
-
-              if (setter) {
-                return <input {...common} value={typeof v !== "undefined" && v !== null ? v : ""} onChange={(ev) => setter(ev.target.value)} />;
-              }
-              return <input {...common} defaultValue={typeof v !== "undefined" && v !== null ? v : ""} />;
-            })()}
+            <input
+              className="input"
+              type="password"
+              placeholder="Придумайте пароль"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
           </div>
 
           <div style={{display:"flex", justifyContent:"flex-end", gap:8}}>
-            <button className="btn btn-primary" type="submit">Зарегистрироваться</button>
+            <button className="btn btn-primary" type="submit" disabled={loading}>
+              {loading ? "Регистрация..." : "Зарегистрироваться"}
+            </button>
           </div>
         </form>
       </div>
     </div>
   );
 }
+
+

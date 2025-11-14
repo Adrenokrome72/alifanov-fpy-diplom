@@ -119,3 +119,4 @@ desktop.ini
 /frontend/.env.local
 /backend/.env.local
 /backend/.pytest_cache/
+/backend/static/

@@ -19,23 +19,23 @@ class RegistrationSerializer(serializers.Serializer):
 
     def validate_username(self, value):
         if not USERNAME_RE.match(value):
-            raise serializers.ValidationError("Username must start with a letter, contain only Latin letters and digits, length 4-20.")
+            raise serializers.ValidationError("Имя пользователя должно начинаться с буквы, содержать только латинские буквы и цифры, длина 4-20 символов.")
         if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Username already exists.")
+            raise serializers.ValidationError("Имя пользователя уже существует.")
         return value
 
     def validate_email(self, value):
         try:
             validate_email(value)
         except Exception:
-            raise serializers.ValidationError("Invalid email address.")
+            raise serializers.ValidationError("Неверный адрес электронной почты.")
         if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Email already registered.")
+            raise serializers.ValidationError("Электронная почта уже зарегистрирована.")
         return value
 
     def validate_password(self, value):
         if not PASSWORD_RE.match(value):
-            raise serializers.ValidationError("Password must be at least 6 characters, include an uppercase letter, a digit and a special character.")
+            raise serializers.ValidationError("Пароль должен быть не менее 6 символов, содержать заглавную букву, цифру и специальный символ.")
         return value
 
     def create(self, validated_data):
@@ -43,10 +43,7 @@ class RegistrationSerializer(serializers.Serializer):
         email = validated_data["email"]
         password = validated_data["password"]
         full_name = validated_data.get("full_name", "")
-
         user = User.objects.create_user(username=username, email=email, password=password)
-
-        # profile is created by signal; update full_name if profile exists
         profile = getattr(user, "profile", None)
         if profile:
             profile.full_name = full_name
@@ -63,7 +60,7 @@ class LoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         user = authenticate(username=attrs.get("username"), password=attrs.get("password"))
         if not user:
-            raise serializers.ValidationError("Invalid username or password.")
+            raise serializers.ValidationError("Неверное имя пользователя или пароль.")
         attrs["user"] = user
         return attrs
 
@@ -98,8 +95,8 @@ class FolderSerializer(serializers.ModelSerializer):
     owner_full_name = serializers.SerializerMethodField()
     files_count = serializers.SerializerMethodField()
     children_count = serializers.SerializerMethodField()
-    children = serializers.SerializerMethodField()  # Добавляем поле children
-    files = serializers.SerializerMethodField()     # Добавляем поле files
+    children = serializers.SerializerMethodField()
+    files = serializers.SerializerMethodField()
 
     class Meta:
         model = Folder
@@ -143,12 +140,10 @@ class FolderSerializer(serializers.ModelSerializer):
             return 0
         
     def get_children(self, obj):
-        """Получаем непосредственных детей папки"""
         children = Folder.objects.filter(parent=obj).order_by("name")
         return FolderSerializer(children, many=True, context=self.context).data
 
     def get_files(self, obj):
-        """Получаем файлы в этой папке"""
         files = UserFile.objects.filter(folder=obj).order_by("-uploaded_at")
         return UserFileSerializer(files, many=True, context=self.context).data
 

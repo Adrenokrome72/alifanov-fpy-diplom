@@ -1,4 +1,3 @@
-// frontend/src/components/Login.jsx
 import React, { useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { login } from '../features/authSlice';
@@ -13,12 +12,10 @@ export default function Login(){
   const [loading, setLoading] = useState(false);
 
   function formatFriendlyError(err) {
-    // err may be Error with .status and .data
     if (!err) return 'Ошибка';
     if (err.status === 400 || err.status === 401) {
       return 'Неправильный логин или пароль';
     }
-    // if err.data contains field errors, take first message
     if (err.data && typeof err.data === 'object') {
       if (err.data.detail) return String(err.data.detail);
       const keys = Object.keys(err.data);
@@ -49,10 +46,9 @@ export default function Login(){
 
   return (
     <div className="container" style={{minHeight: "70vh", display: "flex", alignItems: "center", justifyContent: "center"}}>
-      {/* повысим z-index карточки, чтобы она была над возможными оверлеями */}
       <div className="card" style={{position: "relative", zIndex: 9999, maxWidth: 420, width: "100%", padding: 24}}>
         <div className="card-title">
-          <div style={{fontSize: 20, fontWeight: 700}}>Вход в MyCloud</div>
+          <div style={{fontSize: 20, fontWeight: 700}}>Вход в Cloud</div>
         </div>
 
         <form onSubmit={handle} style={{display: "flex", flexDirection: "column", gap: 12, marginTop: 8}}>

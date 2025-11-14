@@ -1,20 +1,17 @@
-// frontend/src/features/filesSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import apiFetch, { postForm } from '../api';
 import { fetchCurrentUser } from './authSlice';
 import { showToast } from '../utils/toast';
 
-// fetch files for current user or for specific folder
 export const fetchFiles = createAsyncThunk(
   'files/fetchFiles',
   async ({ folder = null, owner = null } = {}, thunkAPI) => {
     try {
       const qs = [];
-      if (folder) qs.push(`folder=${folder}`);
+      if (folder !== null && folder !== undefined) qs.push(`folder=${folder}`);
       if (owner) qs.push(`owner=${owner}`);
       const q = qs.length ? `?${qs.join('&')}` : '';
       const data = await apiFetch(`/api/files/${q}`);
-      // ensure current profile updated
       try { await thunkAPI.dispatch(fetchCurrentUser()); } catch(e){/*ignore*/}
       return { files: data, folder, owner };
     } catch (err) {
@@ -23,7 +20,6 @@ export const fetchFiles = createAsyncThunk(
   }
 );
 
-// upload file (with optional folder and comment)
 export const uploadFile = createAsyncThunk(
   'files/uploadFile',
   async ({ file, folder = null, comment = '' }, thunkAPI) => {
@@ -33,7 +29,6 @@ export const uploadFile = createAsyncThunk(
       if (folder) fd.append('folder', folder);
       if (comment) fd.append('comment', comment);
       const data = await postForm('/api/files/', fd);
-      // refresh user usage
       try { await thunkAPI.dispatch(fetchCurrentUser()); } catch(e){/*ignore*/}
       return data;
     } catch (err) {
@@ -48,7 +43,6 @@ export const moveFile = createAsyncThunk(
     try {
       const payload = { folder };
       const data = await apiFetch(`/api/files/${id}/move/`, { method: 'POST', body: payload });
-      // refresh files and user usage
       try { await thunkAPI.dispatch(fetchFiles({})); } catch(e){/*ignore*/}
       try { await thunkAPI.dispatch(fetchCurrentUser()); } catch(e){/*ignore*/}
       return { id, folder, data };
@@ -87,7 +81,6 @@ export const deleteFile = createAsyncThunk(
   }
 );
 
-// share/unshare file
 export const shareFile = createAsyncThunk(
   'files/shareFile',
   async ({ id, action = 'generate' }, thunkAPI) => {
@@ -100,15 +93,12 @@ export const shareFile = createAsyncThunk(
   }
 );
 
-// download file (just open in new tab)
 export const downloadFile = createAsyncThunk(
   'files/downloadFile',
   async ({ id }, thunkAPI) => {
     try {
-      // Просто открываем ссылку для скачивания - это должно работать с сессионной аутентификацией
       window.open(`/api/files/${id}/download/`, '_self');
       
-      // Обновляем данные о пользователе и файлах
       try { await thunkAPI.dispatch(fetchCurrentUser()); } catch(e){}
       try { await thunkAPI.dispatch(fetchFiles({})); } catch(e){}
       return { id };
@@ -121,7 +111,7 @@ export const downloadFile = createAsyncThunk(
 const slice = createSlice({
   name: 'files',
   initialState: {
-    items: [], // files visible in current folder
+    items: [],
     loading: false,
     error: null,
     selected: null,
@@ -172,7 +162,6 @@ const slice = createSlice({
       .addCase(deleteFile.rejected, (s,a) => { showToast('Ошибка удаления', { type: 'error' }) })
 
       .addCase(shareFile.fulfilled, (s, a) => {
-        // a.payload may contain share_url
         if (a.payload && a.payload.share_url) {
           navigator.clipboard?.writeText(a.payload.share_url).then(()=> {
             showToast('Ссылка скопирована в буфер обмена', { type: 'success' });

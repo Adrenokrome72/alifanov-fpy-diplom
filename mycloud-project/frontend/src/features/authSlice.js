@@ -1,4 +1,3 @@
-// frontend/src/features/authSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import apiFetch from '../api';
 
@@ -12,7 +11,6 @@ export const register = createAsyncThunk('auth/register', async (payload, thunkA
   }
 });
 
-// Логин — после успешного логина подтягиваем данные пользователя
 export const login = createAsyncThunk('auth/login', async (payload, thunkAPI) => {
   try {
     await apiFetch('/api/auth/login/', { method: 'POST', body: payload });
@@ -23,7 +21,6 @@ export const login = createAsyncThunk('auth/login', async (payload, thunkAPI) =>
   }
 });
 
-// Выход
 export const logout = createAsyncThunk('auth/logout', async (_, thunkAPI) => {
   try {
     await apiFetch('/api/auth/logout/', { method: 'POST', body: {} });
@@ -33,7 +30,6 @@ export const logout = createAsyncThunk('auth/logout', async (_, thunkAPI) => {
   }
 });
 
-// Получить текущего пользователя (при старте приложения)
 export const fetchCurrentUser = createAsyncThunk('auth/fetchCurrentUser', async (_, thunkAPI) => {
   try {
     const user = await apiFetch('/api/auth/me/');

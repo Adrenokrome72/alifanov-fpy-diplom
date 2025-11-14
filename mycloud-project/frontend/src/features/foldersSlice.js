@@ -1,16 +1,13 @@
-// frontend/src/features/foldersSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import apiFetch from '../api';
 import { fetchCurrentUser } from './authSlice';
 import { showToast } from '../utils/toast';
 
-// list top-level folders for current user or owner param
 export const fetchFolders = createAsyncThunk(
   'folders/fetchFolders',
   async ({ parent = null, owner = null } = {}, thunkAPI) => {
     try {
       if (owner && thunkAPI) {
-        // use admin storage endpoint to get top-level folders/files
         const res = await apiFetch(`/api/admin-users/${owner}/storage/`);
         return { folders: res.folders || [], files: res.files || [], used_bytes: res.used_bytes, quota: res.quota };
       }
@@ -80,7 +77,6 @@ export const shareFolder = createAsyncThunk(
   async ({ id, action = 'generate' }, thunkAPI) => {
     try {
       const data = await apiFetch(`/api/folders/${id}/share/`, { method: 'POST', body: { action } });
-      // copy link if generation
       if (data && data.share_url) {
         try { await navigator.clipboard.writeText(data.share_url); showToast('Ссылка скопирована', { type: 'success' }); }
         catch (e) { showToast(data.share_url, { type: 'info' }); }
@@ -92,10 +88,35 @@ export const shareFolder = createAsyncThunk(
   }
 );
 
+function flattenTree(tree) {
+  const flat = [];
+  function dfs(node) {
+    flat.push(node);
+    if (node.children) {
+      node.children.forEach(dfs);
+    }
+  }
+  tree.forEach(dfs);
+  return flat;
+}
+
+export const fetchFolderTree = createAsyncThunk(
+  'folders/fetchFolderTree',
+  async (_, thunkAPI) => {
+    try {
+      const data = await apiFetch('/api/folders/tree/');
+      return flattenTree(data);
+    } catch (err) {
+      return thunkAPI.rejectWithValue(err);
+    }
+  }
+);
+
 const slice = createSlice({
   name: 'folders',
   initialState: {
     list: [],
+    tree: [],
     loading: false,
     error: null,
     creating: false,
@@ -109,6 +130,13 @@ const slice = createSlice({
         if (a.payload.folders) s.list = a.payload.folders;
       })
       .addCase(fetchFolders.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error; })
+
+      .addCase(fetchFolderTree.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(fetchFolderTree.fulfilled, (s, a) => {
+        s.loading = false;
+        s.tree = a.payload;
+      })
+      .addCase(fetchFolderTree.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error; })
 
       .addCase(createFolder.pending, (s) => { s.creating = true; })
       .addCase(createFolder.fulfilled, (s, a) => { s.creating = false; s.list = [a.payload, ...s.list]; showToast('Папка создана', { type: 'success' }); })

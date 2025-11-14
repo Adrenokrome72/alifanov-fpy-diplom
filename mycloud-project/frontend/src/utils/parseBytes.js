@@ -1,5 +1,3 @@
-// frontend/src/utils/parseBytes.js
-// Parse human-readable sizes like "15GB", "500 MB", "1024", "1.5 gb"
 export default function parseBytes(input) {
   if (input === null || input === undefined) return null;
   if (typeof input === "number") return Math.max(0, Math.floor(input));

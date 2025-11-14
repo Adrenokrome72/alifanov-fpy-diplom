@@ -1,4 +1,3 @@
-// frontend/src/components/CreateFolderTile.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { createFolder } from '../features/foldersSlice';
@@ -19,7 +18,12 @@ export default function CreateFolderTile({ parent = null }) {
       await dispatch(createFolder({ name: trimmed, parent })).unwrap();
       setName('');
     } catch (e) {
-      // handled in slice
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleCreate();
     }
   };
 
@@ -32,7 +36,7 @@ export default function CreateFolderTile({ parent = null }) {
         </div>
       ) : (
         <div style={{display:'flex', flexDirection:'column', gap:8}}>
-          <input ref={inputRef} value={name} onChange={e=>setName(e.target.value)} placeholder="Имя папки" className="border p-2 rounded" />
+          <input ref={inputRef} value={name} onChange={e=>setName(e.target.value)} onKeyDown={handleKeyDown} placeholder="Имя папки" className="border p-2 rounded" />
           <div style={{display:'flex', gap:8, justifyContent:'center'}}>
             <button onClick={handleCreate} className="btn btn-primary">Создать</button>
             <button onClick={()=>{ setCreating(false); setName(''); }} className="btn">Отмена</button>

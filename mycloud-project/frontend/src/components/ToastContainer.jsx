@@ -1,4 +1,3 @@
-// frontend/src/components/ToastContainer.jsx
 import React, { useEffect, useState } from "react";
 
 function Toast({ id, message, type }) {

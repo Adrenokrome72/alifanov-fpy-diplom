@@ -3,13 +3,12 @@ import { Link } from "react-router-dom";
 import { useSelector } from "react-redux";
 import formatBytes from "../utils/formatBytes";
 
-const DEFAULT_QUOTA = 10 * 1024 * 1024 * 1024; // 10 GB
+const DEFAULT_QUOTA = 10 * 1024 * 1024 * 1024;
 
 export default function Home() {
   const user = useSelector(s => s.auth.user);
   const profile = user?.profile ?? null;
 
-  // Show quota UI only when user is actually logged in
   const showQuota = Boolean(user && profile !== null);
 
   const used = showQuota ? (profile?.used_bytes ?? 0) : 0;
@@ -51,7 +50,7 @@ export default function Home() {
         <hr className="mt-6 mb-4" />
 
         <div className="text-gray-700">
-          <h3 className="font-semibold">Кратко</h3>
+          <h3 className="font-semibold">Возможности</h3>
           <ul className="text-sm text-gray-600 mt-2">
             <li>Загружайте файлы, создавайте папки и делитесь ссылками.</li>
             <li>Администратор может управлять пользователями и квотами.</li>

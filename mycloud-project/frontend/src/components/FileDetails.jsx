@@ -1,5 +1,4 @@
-// frontend/src/components/FileDetails.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import apiFetch from "../api";
 import { showToast } from "../utils/toast";
 import formatBytes from "../utils/formatBytes";
@@ -27,8 +26,19 @@ function FileInfo({ file, onClose, onDelete, onShare, readOnly }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(initialBase);
   const [comment, setComment] = useState(file.comment || "");
-  const [downloads, setDownloads] = useState(file.downloads_count || file.downloads || 0);
+  const [downloads, setDownloads] = useState(file.download_count || file.downloads_count || 0);
+  const [lastDownloadedAt, setLastDownloadedAt] = useState(file.last_downloaded_at);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const parts = getFileNameParts(file.original_name);
+    setName(parts.base);
+    setComment(file.comment || "");
+    setDownloads(file.download_count || file.downloads_count || 0);
+    setLastDownloadedAt(file.last_downloaded_at);
+    setEditing(false);
+  }, [file && (file.id || file.name)]);
+
 
   const doRename = async () => {
     const newBase = String(name || "").trim();
@@ -67,11 +77,9 @@ function FileInfo({ file, onClose, onDelete, onShare, readOnly }) {
 
   const doDownload = async () => {
     try {
-      // Простой и надежный способ - использовать window.open с абсолютным URL
-      // Это обойдет проблемы с прокси и CORS
       const downloadUrl = `/api/files/${file.id}/download/`;
       console.log("Download URL:", downloadUrl);
-      
+
       // Создаем временную ссылку для скачивания
       const a = document.createElement("a");
       a.href = downloadUrl;
@@ -80,8 +88,9 @@ function FileInfo({ file, onClose, onDelete, onShare, readOnly }) {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      
+
       setDownloads((d) => (d || 0) + 1);
+      setLastDownloadedAt(new Date().toISOString());
       window.dispatchEvent(new CustomEvent("mycloud:content-changed"));
     } catch (e) {
       console.error("Download error:", e);
@@ -153,7 +162,7 @@ function FileInfo({ file, onClose, onDelete, onShare, readOnly }) {
           <div style={{marginTop:12, display:"grid", gap:8}}>
             <div style={{fontSize:12, color:"#6b7280"}}>Тип: {initialExt || "(без расширения)"}</div>
             <div style={{fontSize:12, color:"#6b7280"}}>Размер: {formatBytes(file.size)}</div>
-            <div style={{fontSize:12, color:"#6b7280"}}>Загрузок: {downloads} {file.last_downloaded_at ? ` (посл.: ${new Date(file.last_downloaded_at).toLocaleString()})` : ""}</div>
+            <div style={{fontSize:12, color:"#6b7280"}}>Загрузок: {downloads} {lastDownloadedAt ? ` (посл.: ${new Date(lastDownloadedAt).toLocaleString()})` : ""}</div>
 
             <div>
               <div style={{fontSize:12, color:"#6b7280"}}>Комментарий</div>
@@ -274,3 +283,4 @@ function FolderInfo({ folder, onClose, onDelete, onShare, readOnly }) {
     </div>
   );
 }
+

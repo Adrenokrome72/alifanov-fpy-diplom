@@ -1,15 +1,7 @@
-// frontend/src/components/FolderPickerModal.jsx
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchFolders } from '../features/foldersSlice';
 
-/**
- * Props:
- *  - open: boolean
- *  - onClose: () => void
- *  - onConfirm: (targetFolderId|null) => void
- *  - currentFolder: id|null (optional)
- */
 export default function FolderPickerModal({ open, onClose, onConfirm, currentFolder = null }) {
   const dispatch = useDispatch();
   const folders = useSelector(s => s.folders.items || []);

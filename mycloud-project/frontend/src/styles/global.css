@@ -1,15 +1,10 @@
-/* frontend/src/styles/global.css
-   Новый лаконичный, лёгкий и адаптивный дизайн для приложения.
-   Заменить файл целиком.
-*/
-
 /* ========== Theme variables ========== */
 :root{
-  --bg: #F8FAFC;            /* фон приложения */
-  --panel: #ffffff;         /* панели / карточки */
-  --muted: #94a3b8;         /* вторичный текст */
-  --text: #0f172a;          /* основной текст */
-  --brand: #0ea5a4;         /* primary (teal) */
+  --bg: #F8FAFC;
+  --panel: #ffffff;
+  --muted: #94a3b8;
+  --text: #0f172a;
+  --brand: #0ea5a4;
   --brand-600: #0b9b99;
   --danger: #ef4444;
   --glass: rgba(15,23,42,0.04);
@@ -410,10 +405,8 @@ body{
   background: rgba(15,23,42,0.03);
 }
 
-/* auth form small polish */
 .auth-center { min-height: 70vh; display:flex; align-items:center; justify-content:center; }
 .card .label { color: var(--muted); font-size:13px; margin-bottom:6px; display:block; }
 .btn-primary { padding:10px 14px; border-radius:12px; }
 .input { border-radius:10px; padding:10px 12px; }
 
-/* ===== End of global styles ===== */

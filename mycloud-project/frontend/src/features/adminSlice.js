@@ -1,4 +1,3 @@
-// frontend/src/features/adminSlice.js
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import apiFetch from "../api";
 

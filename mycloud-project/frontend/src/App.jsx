@@ -1,4 +1,3 @@
-// frontend/src/App.jsx
 import React, { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
@@ -8,7 +7,7 @@ import Login from "./components/Login";
 import Register from "./components/Register";
 import AdminPanel from "./components/AdminPanel";
 import Home from "./components/Home";
-import AdminStorageView from "./components/AdminStorageView"; // Измененный импорт
+import AdminStorageView from "./components/AdminStorageView";
 import { fetchCurrentUser } from "./features/authSlice";
 
 export default function App() {
@@ -23,7 +22,6 @@ export default function App() {
         try {
           await dispatch(fetchCurrentUser()).unwrap();
         } catch (e) {
-          // ignore
         }
       };
     }

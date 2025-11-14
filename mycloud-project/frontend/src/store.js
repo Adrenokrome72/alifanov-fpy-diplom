@@ -1,4 +1,3 @@
-// frontend/src/store.js
 import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "./features/authSlice";
 import filesReducer from "./features/filesSlice";

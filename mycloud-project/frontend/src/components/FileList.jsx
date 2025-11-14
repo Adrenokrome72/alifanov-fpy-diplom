@@ -1,4 +1,3 @@
-// frontend/src/components/FileList.jsx
 import React, { useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { uploadFile, renameFile, shareFile, deleteFile } from '../features/filesSlice';
@@ -34,7 +33,6 @@ export default function FileList({ files = [], folderId = null, onRefresh, onReq
   };
 
   const doMove = (f) => {
-    // Instead of prompt, delegate to FileManager to open modal
     if (onRequestMove) onRequestMove(f);
   };
 

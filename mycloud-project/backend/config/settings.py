@@ -1,10 +1,8 @@
-# backend/config/settings.py
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# базовая загрузка .env (ищем .env в корне репозитория — ../.env относительно backend/config)
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  # mycloud-project
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = BASE_DIR / ".env"
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
@@ -24,16 +22,14 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    # сторонние
     "rest_framework",
     "corsheaders",
 
-    # наши приложения
     "cloud",
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",  # должен быть выше CommonMiddleware
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -97,15 +93,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 MEDIA_ROOT = os.path.abspath(os.getenv("MEDIA_ROOT", os.path.join(BASE_DIR, "media")))
 
-# --- ВАЖНО: путь, куда webpack пишет бандл в вашем проекте ---
+# --- ВАЖНО: путь, куда webpack пишет бандл ---
 # webpack output: frontend/webpack.config.js -> ../backend/static/frontend
 # реальные сгенерированные файлы оказываются в backend/static/frontend
 WEBPACK_STATIC_DIR = BASE_DIR / "backend" / "static" / "frontend"
 
-# Поддерживаем оба варианта: если человек решил писать вебпак в другой путь
 STATICFILES_DIRS = [
     WEBPACK_STATIC_DIR,
-    # если у вас есть упрощённый вариант (старый), можно оставить как fallback:
     BASE_DIR / "static" / "frontend",
 ]
 
@@ -121,7 +115,6 @@ try:
     from corsheaders.defaults import default_headers
     CORS_ALLOW_HEADERS = list(default_headers) + ["X-CSRFToken", "X-Requested-With"]
 except Exception:
-    # на случай, если corsheaders изменит API — хотя обычно default_headers доступен
     CORS_ALLOW_HEADERS = ["content-type", "accept", "x-csrftoken", "x-requested-with"]
 
 # CSRF
@@ -130,11 +123,10 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
-# Dev-friendly cookie settings (НЕ ОСТАВЛЯТЬ ТАК В ПРОД)
-CSRF_COOKIE_HTTPONLY = False         # JS должен читать csrftoken
-CSRF_COOKIE_SAMESITE = "Lax"         # обычно работает с прокси dev-server
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SAMESITE = "Lax"
-CSRF_COOKIE_SECURE = False           # dev: не https
+CSRF_COOKIE_SECURE = False
 SESSION_COOKIE_SECURE = False
 
 # Django REST Framework - базовые настройки
@@ -148,10 +140,8 @@ REST_FRAMEWORK = {
     ],
 }
 
-# дефолтная квота для новых пользователей (в байтах). Можно переопределить в .env:
-USER_DEFAULT_QUOTA = int(os.getenv("USER_DEFAULT_QUOTA", str(100 * 1024 * 1024)))  # 100 MB
+USER_DEFAULT_QUOTA = int(os.getenv("USER_DEFAULT_QUOTA", str(100 * 1024 * 1024)))
 
-# Логи на консоль (минимальная конфигурация)
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

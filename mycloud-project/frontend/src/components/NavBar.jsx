@@ -5,8 +5,7 @@ import { logout, fetchCurrentUser } from "../features/authSlice";
 import formatBytes from "../utils/formatBytes";
 import { showToast } from "../utils/toast";
 
-/* DEFAULT_QUOTA can be kept in config */
-const DEFAULT_QUOTA = 10 * 1024 * 1024 * 1024; // 10 GB
+const DEFAULT_QUOTA = 10 * 1024 * 1024 * 1024;
 
 export default function NavBar() {
   const dispatch = useDispatch();
@@ -29,11 +28,8 @@ export default function NavBar() {
     return () => window.removeEventListener("mycloud:usage", onUsage);
   }, []);
 
-  // Try to ensure we have fresh user data on mount
   useEffect(() => {
-    // Only try if we don't have a user yet — this avoids unnecessary calls when anonymous
     dispatch(fetchCurrentUser()).catch(()=>{ /* ignore */});
-    // expose convenience function used by some components
     window.fetchCurrentUser = async () => {
       try {
         const res = await dispatch(fetchCurrentUser()).unwrap();
@@ -64,7 +60,6 @@ export default function NavBar() {
     }
   }
 
-  // Only compute quota/used when we have a user with profile — otherwise hide stats
   const hasProfile = Boolean(user && (user.profile || user.full_name || user.username));
   const quotaRaw = hasProfile ? (user?.profile?.quota ?? null) : null;
   const quota = quotaRaw != null ? Number(quotaRaw) : DEFAULT_QUOTA;
@@ -76,11 +71,11 @@ export default function NavBar() {
     <header className="header bg-slate-50 shadow-sm">
       <div className="header-inner container mx-auto p-3" style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Link to="/" className="brand font-bold text-lg">MyCloud</Link>
+          <Link to="/" className="brand font-bold text-lg">Cloud</Link>
           <nav className="nav" aria-label="Main navigation" style={{display:"flex", gap:12}}>
             <Link to="/" className="link">Главная</Link>
             <Link to="/files" className="link">Файлы</Link>
-            {user && user.is_staff && <Link to="/admin" className="link">Админ</Link>}
+            {user && user.is_staff && <Link to="/admin" className="link">Панель администратора</Link>}
           </nav>
         </div>
 
@@ -89,10 +84,18 @@ export default function NavBar() {
             <>
               <div style={{textAlign:"right"}}>
                 <div className="text-sm">Привет, <strong>{firstName}</strong>!</div>
-                { /* Показываем статистику только если у пользователя есть профиль (т.е. он залогинен) */ }
                 { hasProfile && (
-                  <div className="text-xs text-gray-500">
-                    Осталось: {formatBytes(remaining)} ({percentFree}%)
+                  <div style={{marginLeft:16, display:"flex", alignItems:"center", gap:8}}>
+                    <div style={{height:12, width:120, background:"#f1f5f9", borderRadius:6, overflow:"hidden"}}>
+                      <div style={{
+                        height:"100%",
+                        width: `${Math.min(100, Math.max(0, Math.round(((quota - remaining) / quota) * 100))) }%`,
+                        background: `linear-gradient(90deg,#06b6d4,#10b981)`
+                      }} />
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      { `${formatBytes(remaining)} из ${formatBytes(quota)}` }
+                    </div>
                   </div>
                 )}
               </div>

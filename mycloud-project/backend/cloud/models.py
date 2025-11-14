@@ -29,7 +29,7 @@ class UserProfile(models.Model):
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     full_name = models.CharField(max_length=255, blank=True)
-    quota = models.BigIntegerField(default=getattr(settings, "USER_DEFAULT_QUOTA", 10 * 1024 * 1024 * 1024), validators=[MinValueValidator(0)])  # байты
+    quota = models.BigIntegerField(default=getattr(settings, "USER_DEFAULT_QUOTA", 10 * 1024 * 1024 * 1024), validators=[MinValueValidator(0)])
 
     def __str__(self):
         return f"profile:{self.user.username}"
@@ -44,7 +44,6 @@ class UserProfile(models.Model):
 
     @property
     def used_bytes(self):
-        # удобное свойство — избавит от ошибок обращения profile.used_bytes
         return self.get_used_bytes()
 
     def remaining_bytes(self):
@@ -56,8 +55,6 @@ class Folder(models.Model):
     name = models.CharField(max_length=255)
     parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.CASCADE, related_name="children")
     created_at = models.DateTimeField(auto_now_add=True)
-
-    # sharing
     is_shared = models.BooleanField(default=False)
     share_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
 
@@ -107,11 +104,9 @@ class UserFile(models.Model):
         return f"{self.original_name} (owner={self.owner_id})"
 
     def save(self, *args, **kwargs):
-        # Если файл новый и нет original_name, поставить
         if not self.original_name and self.file:
             self.original_name = os.path.basename(self.file.name)
         super().save(*args, **kwargs)
-        # Обновим размер (если файл доступен)
         try:
             if self.file and hasattr(self.file, "size"):
                 if self.size != self.file.size:
@@ -138,7 +133,6 @@ class UserFile(models.Model):
             self.last_downloaded_at = timezone.now()
             self.save(update_fields=["download_count", "last_downloaded_at"])
         except Exception:
-            # на случай ошибок записи
             self.last_downloaded_at = timezone.now()
             try:
                 self.save(update_fields=["last_downloaded_at"])
@@ -164,5 +158,4 @@ def delete_file_on_record_delete(sender, instance, **kwargs):
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
-        # создаём профиль с дефолтной квотой, имя пустое
         UserProfile.objects.create(user=instance, quota=getattr(settings, "USER_DEFAULT_QUOTA", 10 * 1024 * 1024 * 1024))

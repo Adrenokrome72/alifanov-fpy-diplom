@@ -18,7 +18,6 @@ export default function AdminPanel() {
 
   const getUid = (u) => u?.id ?? u?.pk ?? u?.user_id ?? u?.uid ?? u?.username;
 
-  // load users
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -38,16 +37,13 @@ export default function AdminPanel() {
     return () => { mounted = false; };
   }, [refreshFlag]);
 
-  // block/unblock using server endpoints: toggle_active or specialized endpoints
   const toggleBlock = async (user, isActive) => {
     const uid = getUid(user);
     if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
     try {
-      // Try toggle_active endpoint first
       try {
         await apiFetch(`/api/admin-users/${uid}/toggle_active/`, { method: "POST", body: { is_active: !!isActive } });
       } catch (e) {
-        // fallback to patch
         await apiFetch(`/api/admin-users/${uid}/`, { method: "PATCH", body: { is_active: !!isActive } });
       }
       toast(isActive ? "Пользователь активирован" : "Пользователь деактивирован", { type: "success" });
@@ -58,7 +54,6 @@ export default function AdminPanel() {
     }
   };
 
-  // set/remove admin: use set_admin endpoint or patch is_staff
   const toggleAdmin = async (user, isAdmin) => {
     const uid = getUid(user);
     if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
@@ -76,7 +71,6 @@ export default function AdminPanel() {
     }
   };
 
-  // delete user (support purge query)
   const deleteUser = async (user) => {
     const uid = getUid(user);
     if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
@@ -158,7 +152,6 @@ export default function AdminPanel() {
               </div>
 
               <div style={{ marginTop: 14 }}>
-                {/* Only show action buttons when a user is selected */}
                 {selectedUser && (
                 <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                   <button
@@ -186,14 +179,95 @@ export default function AdminPanel() {
                     className="btn btn-ghost"
                     onClick={() => selectedUser && toggleAdmin(selectedUser, true)}
                   >
-                    Сделать админом
+                    Назначить администратора
                   </button>
 
                   <button
                     className="btn btn-ghost"
                     onClick={() => selectedUser && toggleAdmin(selectedUser, false)}
                   >
-                    Убрать права админа
+                    Убрать права администратора
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      // Create modal for quota editing
+                      const modal = document.createElement('div');
+                      modal.style.cssText = `
+                        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                        background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+                        z-index: 10000;
+                      `;
+                      modal.innerHTML = `
+                        <div style="background: white; padding: 20px; border-radius: 8px; max-width: 400px; width: 90%;">
+                          <h3 style="margin: 0 0 16px 0; font-size: 18px;">Изменить лимит места</h3>
+                          <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                            <input type="number" id="quotaValue" placeholder="Размер" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;" min="0" />
+                            <select id="quotaUnit" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                              <option value="MB">MB</option>
+                              <option value="GB">GB</option>
+                              <option value="TB">TB</option>
+                            </select>
+                          </div>
+                          <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button id="cancelBtn" class="btn">Отмена</button>
+                            <button id="saveBtn" class="btn btn-primary">Сохранить</button>
+                          </div>
+                        </div>
+                      `;
+                      document.body.appendChild(modal);
+
+                      const quotaValueInput = modal.querySelector('#quotaValue');
+                      const quotaUnitSelect = modal.querySelector('#quotaUnit');
+                      const cancelBtn = modal.querySelector('#cancelBtn');
+                      const saveBtn = modal.querySelector('#saveBtn');
+
+                      if (selectedUser.quota) {
+                        const quotaInMB = selectedUser.quota / (1024 * 1024);
+                        if (quotaInMB >= 1024 * 1024) {
+                          quotaValueInput.value = (quotaInMB / (1024 * 1024)).toFixed(2);
+                          quotaUnitSelect.value = 'TB';
+                        } else if (quotaInMB >= 1024) {
+                          quotaValueInput.value = (quotaInMB / 1024).toFixed(2);
+                          quotaUnitSelect.value = 'GB';
+                        } else {
+                          quotaValueInput.value = quotaInMB.toFixed(2);
+                          quotaUnitSelect.value = 'MB';
+                        }
+                      }
+
+                      cancelBtn.onclick = () => document.body.removeChild(modal);
+                      saveBtn.onclick = async () => {
+                        const value = parseFloat(quotaValueInput.value);
+                        const unit = quotaUnitSelect.value;
+                        if (isNaN(value) || value < 0) {
+                          toast("Некорректное значение", { type: "error" });
+                          return;
+                        }
+                        let quotaBytes = value;
+                        if (unit === 'GB') quotaBytes *= 1024 * 1024 * 1024;
+                        else if (unit === 'TB') quotaBytes *= 1024 * 1024 * 1024 * 1024;
+                        else quotaBytes *= 1024 * 1024; // MB
+
+                        try {
+                          await apiFetch(`/api/admin-users/${getUid(selectedUser)}/set_quota/`, {
+                            method: "POST",
+                            body: { quota: Math.floor(quotaBytes) }
+                          });
+                          toast("Лимит обновлён", { type: "success" });
+                          setRefreshFlag(f => f + 1);
+                          // Update the selected user data immediately
+                          setSelectedUser(prev => prev ? { ...prev, quota: Math.floor(quotaBytes) } : prev);
+                          document.body.removeChild(modal);
+                        } catch (err) {
+                          console.error("setQuota error", err);
+                          toast("Не удалось обновить лимит", { type: "error" });
+                        }
+                      };
+                    }}
+                  >
+                    Изменить лимит места
                   </button>
 
                   <button
@@ -208,20 +282,32 @@ export default function AdminPanel() {
                 <div style={{ fontWeight: 700, marginBottom: 8 }}>Информация</div>
                 <div className="card p-2" style={{ marginBottom: 12 }}>
                   {selectedUser ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                      <div><b>Логин:</b> {selectedUser.username ?? "-"}</div>
-                      <div><b>Email:</b> {selectedUser.email ?? "-"}</div>
-                      <div><b>Статус:</b> {selectedUser.is_active === false ? "Неактивен" : (selectedUser.is_active ? "Активен" : "-")}</div>
-                      <div><b>Админ:</b> {selectedUser.is_admin || selectedUser.is_staff ? "Да" : "Нет"}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div><b>Логин:</b> {selectedUser.username ?? "-"}</div>
+                        <div><b>Email:</b> {selectedUser.email ?? "-"}</div>
+                        <div><b>Статус:</b> {selectedUser.is_active === false ? "Неактивен" : (selectedUser.is_active ? "Активен" : "-")}</div>
+                        <div><b>Администратор:</b> {selectedUser.is_admin || selectedUser.is_staff ? "Да" : "Нет"}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Место</div>
+                        <div style={{marginTop:6}}>
+                          <div style={{height:12, background:"#f1f5f9", borderRadius:8, overflow:"hidden"}}>
+                            <div style={{
+                              height:"100%",
+                              width: `${Math.min(100, Math.max(0, Math.round((selectedUser.files_size / (selectedUser.quota || 10*1024*1024*1024)) * 100))) }%`,
+                              background: `linear-gradient(90deg,#06b6d4,#10b981)`
+                            }} />
+                          </div>
+                          <div className="text-xs text-gray-500 mt-2">
+                            { `${formatBytes(selectedUser.files_size || 0)} из ${formatBytes(selectedUser.quota || 10*1024*1024*1024)} (${Math.round((selectedUser.files_size / (selectedUser.quota || 10*1024*1024*1024)) * 100)}% занято)` }
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <div className="muted">Выберите пользователя в левой колонке</div>
                   )}
-                </div>
-
-                <div style={{ fontWeight: 700, marginBottom: 8 }}>Пример содержания (быстрый просмотр)</div>
-                <div className="muted" style={{ fontSize: 13 }}>
-                  Нажмите «Просмотреть хранилище», чтобы открыть подробное представление хранилища пользователя.
                 </div>
               </div>
             </div>

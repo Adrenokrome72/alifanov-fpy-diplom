@@ -1,4 +1,3 @@
-// frontend/src/components/FileManager.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -12,6 +11,7 @@ import {
 } from "../features/filesSlice";
 import {
   fetchFolders,
+  fetchFolderTree,
   createFolder,
   deleteFolder,
   renameFolder,
@@ -52,6 +52,12 @@ function fileFolderId(file) {
   return null;
 }
 
+function handleFolderSelect(folder) {
+  // Just select the folder, don't navigate
+  setSelectedFolder(folder);
+  setSelectedFile(null);
+}
+
 export default function FileManager() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -62,15 +68,21 @@ export default function FileManager() {
   const user = useSelector((s) => s.auth.user);
   const filesState = useSelector((s) => s.files);
   const foldersState = useSelector((s) => s.folders);
+  const folderTree = useSelector((s) => s.folders.tree);
 
   const [localFiles, setLocalFiles] = useState([]);
   const [localFolders, setLocalFolders] = useState([]);
+  const [rootFiles, setRootFiles] = useState([]);
+  const [rootFolders, setRootFolders] = useState([]);
   const [currentFolder, setCurrentFolder] = useState(null);
+  const [folderHistory, setFolderHistory] = useState([]);
+  const [navigationHistory, setNavigationHistory] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [uploadComment, setUploadComment] = useState("");
   const fileInputRef = useRef(null);
   const [uploadProgress, setUploadProgress] = useState(null);
+  const [editingFileId, setEditingFileId] = useState(null);
 
   const [folderFilesCount, setFolderFilesCount] = useState({});
   const [folderChildrenCount, setFolderChildrenCount] = useState({});
@@ -80,23 +92,26 @@ export default function FileManager() {
 
   useEffect(() => {
     const init = async () => {
-      try { 
+      try {
         if (!ownerMode) {
-          await dispatch(fetchCurrentUser()).unwrap(); 
+          await dispatch(fetchCurrentUser()).unwrap();
         }
       } catch (e) {}
-      
+
       if (ownerMode) {
         try {
           const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/`);
           setLocalFiles(storage.files || []);
           setLocalFolders(storage.folders || []);
+          setRootFiles(storage.files || []);
+          setRootFolders(storage.folders || []);
         } catch (err) {
           showToast("Не удалось загрузить хранилище пользователя", { type: "error" });
         }
       } else {
         try { await dispatch(fetchFiles({ folder: null })).unwrap(); } catch (e) {}
         try { await dispatch(fetchFolders({ parent: null })).unwrap(); } catch (e) {}
+        try { await dispatch(fetchFolderTree()).unwrap(); } catch (e) {}
       }
     };
     init();
@@ -106,8 +121,12 @@ export default function FileManager() {
     if (!ownerMode) {
       setLocalFiles(filesState.items || []);
       setLocalFolders(foldersState.list || []);
+      if (currentFolder === null) {
+        setRootFiles(filesState.items || []);
+        setRootFolders(foldersState.list || []);
+      }
     }
-  }, [filesState.items, foldersState.list, ownerMode]);
+  }, [filesState.items, foldersState.list, ownerMode, currentFolder]);
 
   useEffect(() => {
     const fcount = {};
@@ -164,6 +183,8 @@ export default function FileManager() {
   });
 
   const openFolder = async (folderId) => {
+    // Add current folder to history before changing
+    setNavigationHistory(prev => [...prev, currentFolder]);
     setCurrentFolder(folderId);
     setSelectedFile(null);
     setSelectedFolder(null);
@@ -185,18 +206,9 @@ export default function FileManager() {
     setCurrentFolder(null);
     setSelectedFile(null);
     setSelectedFolder(null);
-    if (ownerMode) {
-      try {
-        const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/`);
-        setLocalFiles(storage.files || []);
-        setLocalFolders(storage.folders || []);
-      } catch (e) { showToast("Не удалось открыть корень", { type: "error" }); }
-    } else {
-      try {
-        await dispatch(fetchFiles({ folder: null })).unwrap();
-        await dispatch(fetchFolders({ parent: null })).unwrap();
-      } catch (e) {}
-    }
+    setNavigationHistory([]); // Clear history when going to root
+    setLocalFiles(rootFiles);
+    setLocalFolders(rootFolders);
   };
 
   const uploadWithProgress = (file) => new Promise((resolve, reject) => {
@@ -337,12 +349,13 @@ export default function FileManager() {
   };
 
   const [lastClick, setLastClick] = useState({ id: null, time: 0 });
-  const [editingFileId, setEditingFileId] = useState(null);
 
   const handleFileClick = (file) => {
     const now = Date.now();
     if (lastClick.id === `file-${file.id}` && (now - lastClick.time) < 350) {
-      handleFileOpen(file);
+      // Double-click: open file details
+      setSelectedFile(file);
+      setSelectedFolder(null);
       setLastClick({ id: null, time: 0 });
       return;
     }
@@ -357,7 +370,7 @@ export default function FileManager() {
       // Используем тот же подход, что и в FileDetails
       const downloadUrl = `/api/files/${file.id}/download/`;
       console.log("FileManager Download URL:", downloadUrl);
-      
+
       const a = document.createElement("a");
       a.href = downloadUrl;
       a.style.display = "none";
@@ -365,12 +378,21 @@ export default function FileManager() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      
+
+      // Update selected file download stats immediately if it's the one being downloaded
+      if (selectedFile && selectedFile.id === file.id) {
+        setSelectedFile(prev => prev ? {
+          ...prev,
+          downloads_count: (prev.downloads_count || prev.download_count || 0) + 1,
+          last_downloaded_at: new Date().toISOString()
+        } : prev);
+      }
+
       await dispatch(fetchCurrentUser());
       window.dispatchEvent(new CustomEvent("mycloud:content-changed"));
-    } catch (err) { 
+    } catch (err) {
       console.error("File open error:", err);
-      showToast("Ошибка открытия файла", { type: "error" }); 
+      showToast("Ошибка открытия файла", { type: "error" });
     }
   };
 
@@ -396,6 +418,10 @@ export default function FileManager() {
   const handleInlineRenameFile = async (id, newBaseName) => {
     try {
       await dispatch(renameFileThunk({ id, name: newBaseName })).unwrap();
+      // Update selected file name immediately if it's the one being renamed
+      if (selectedFile && selectedFile.id === id) {
+        setSelectedFile(prev => prev ? { ...prev, original_name: newBaseName } : prev);
+      }
       showToast("Файл переименован", { type: "success" });
       setEditingFileId(null);
       window.dispatchEvent(new CustomEvent("mycloud:content-changed"));
@@ -440,6 +466,10 @@ export default function FileManager() {
     try {
       await dispatch(renameFolder({ id, name: newName })).unwrap();
       await dispatch(fetchFolders({ parent: folderParentId(localFolders.find(f=>f.id===id) || null) ?? null }));
+      // Update selected folder name immediately if it's the one being renamed
+      if (selectedFolder && selectedFolder.id === id) {
+        setSelectedFolder(prev => prev ? { ...prev, name: newName } : prev);
+      }
       showToast("Папка переименована", { type: "success" });
       window.dispatchEvent(new CustomEvent("mycloud:content-changed"));
     } catch (err) { showToast("Ошибка переименования папки", { type: "error" }); }
@@ -470,15 +500,18 @@ export default function FileManager() {
           <div className="card p-3">
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <strong>Папки</strong>
-              <div style={{fontSize:12, color:"#6b7280"}}>{visibleFolders.filter(f=>folderParentId(f)===null).length} в корне</div>
             </div>
 
             <div style={{marginTop:12}}>
               <FolderTree
-                folders={visibleFolders}
+                folders={folderTree}
                 currentFolder={currentFolder}
                 onOpen={(id)=> openFolder(id)}
-                onSelect={(node)=> handleFolderClick(node)}
+                onSelect={(node)=> {
+                  // In folder tree, clicking should just select, not navigate
+                  setSelectedFolder(node);
+                  setSelectedFile(null);
+                }}
                 onDragOver={handleFolderDragOver}
                 onDrop={handleFolderDrop}
               />
@@ -503,7 +536,6 @@ export default function FileManager() {
                   {ownerMode ? `Хранилище пользователя (ID: ${ownerMode})` : 'Файлы'}
                 </strong>
                 <div style={{fontSize:12, color:"#6b7280"}}>
-                  {displayedFolders.length} папок, {displayedFiles.length} файлов
                   {ownerMode && ' (режим просмотра)'}
                 </div>
               </div>
@@ -516,8 +548,142 @@ export default function FileManager() {
                     <input placeholder="Комментарий" value={uploadComment} onChange={e=>setUploadComment(e.target.value)} className="border p-2 rounded" />
                   </>
                 )}
-                <button className="btn" onClick={openRoot}>
-                  {ownerMode ? 'В корень просмотра' : 'В корень'}
+                {currentFolder && (
+                  <button className="btn" onClick={() => {
+                    // Go back using navigation history
+                    if (navigationHistory.length > 0) {
+                      const previousFolder = navigationHistory[navigationHistory.length - 1];
+                      setNavigationHistory(prev => prev.slice(0, -1));
+                      setCurrentFolder(previousFolder);
+                      setSelectedFile(null);
+                      setSelectedFolder(null);
+                      // Load content for the previous folder
+                      if (previousFolder) {
+                        // Load content for the folder
+                        const loadPreviousContent = async () => {
+                          if (ownerMode) {
+                            try {
+                              const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/?parent=${previousFolder}`);
+                              setLocalFiles(storage.files || []);
+                              setLocalFolders(storage.folders || []);
+                            } catch (e) {
+                              console.error("Load previous content error", e);
+                              showToast && showToast("Не удалось загрузить содержимое папки", { type: "error" });
+                            }
+                          } else {
+                            try {
+                              await dispatch(fetchFiles({ folder: previousFolder })).unwrap();
+                              await dispatch(fetchFolders({ parent: previousFolder })).unwrap();
+                            } catch (e) {
+                              console.error("Load previous content error", e);
+                              showToast && showToast("Не удалось загрузить содержимое папки", { type: "error" });
+                            }
+                          }
+                        };
+                        loadPreviousContent();
+                      } else {
+                        // Going back to root
+                        setCurrentFolder(null);
+                        if (ownerMode) {
+                          // Reload root content for owner mode
+                          const loadRootContent = async () => {
+                            try {
+                              const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/`);
+                              setLocalFiles(storage.files || []);
+                              setLocalFolders(storage.folders || []);
+                              setRootFiles(storage.files || []);
+                              setRootFolders(storage.folders || []);
+                            } catch (e) {
+                              console.error("Load root content error", e);
+                              showToast && showToast("Не удалось загрузить корневую папку", { type: "error" });
+                            }
+                          };
+                          loadRootContent();
+                        } else {
+                          // Reload root content for normal mode
+                          const loadRootContent = async () => {
+                            try {
+                              await dispatch(fetchFiles({ folder: null })).unwrap();
+                              await dispatch(fetchFolders({ parent: null })).unwrap();
+                            } catch (e) {
+                              console.error("Load root content error", e);
+                              showToast && showToast("Не удалось загрузить корневую папку", { type: "error" });
+                            }
+                          };
+                          loadRootContent();
+                        }
+                      }
+                    } else {
+                      // Fallback to root if no history
+                      setCurrentFolder(null);
+                      if (ownerMode) {
+                        // Reload root content for owner mode
+                        const loadRootContent = async () => {
+                          try {
+                            const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/`);
+                            setLocalFiles(storage.files || []);
+                            setLocalFolders(storage.folders || []);
+                            setRootFiles(storage.files || []);
+                            setRootFolders(storage.folders || []);
+                          } catch (e) {
+                            console.error("Load root content error", e);
+                            showToast && showToast("Не удалось загрузить корневую папку", { type: "error" });
+                          }
+                        };
+                        loadRootContent();
+                      } else {
+                        // Reload root content for normal mode
+                        const loadRootContent = async () => {
+                          try {
+                            await dispatch(fetchFiles({ folder: null })).unwrap();
+                            await dispatch(fetchFolders({ parent: null })).unwrap();
+                          } catch (e) {
+                            console.error("Load root content error", e);
+                            showToast && showToast("Не удалось загрузить корневую папку", { type: "error" });
+                          }
+                        };
+                        loadRootContent();
+                      }
+                    }
+                  }}>
+                    Назад
+                  </button>
+                )}
+                <button className="btn" onClick={() => {
+                  setCurrentFolder(null);
+                  setNavigationHistory([]); // Clear history when going to root
+                  setSelectedFile(null);
+                  setSelectedFolder(null);
+                  if (ownerMode) {
+                    // Reload root content for owner mode
+                    const loadRootContent = async () => {
+                      try {
+                        const storage = await apiFetch(`/api/admin-users/${ownerMode}/storage/`);
+                        setLocalFiles(storage.files || []);
+                        setLocalFolders(storage.folders || []);
+                        setRootFiles(storage.files || []);
+                        setRootFolders(storage.folders || []);
+                      } catch (e) {
+                        console.error("Load root content error", e);
+                        showToast && showToast("Не удалось загрузить корневую папку", { type: "error" });
+                      }
+                    };
+                    loadRootContent();
+                  } else {
+                    // Reload root content for normal mode
+                    const loadRootContent = async () => {
+                      try {
+                        await dispatch(fetchFiles({ folder: null })).unwrap();
+                        await dispatch(fetchFolders({ parent: null })).unwrap();
+                      } catch (e) {
+                        console.error("Load root content error", e);
+                        showToast && showToast("Не удалось загрузить корневую папку", { type: "error" });
+                      }
+                    };
+                    loadRootContent();
+                  }
+                }}>
+                  В начало
                 </button>
               </div>
             </div>
@@ -552,7 +718,7 @@ export default function FileManager() {
                 >
                   <div style={{fontSize:36}}>📁</div>
                   <div style={{marginTop:8, fontWeight:600, textAlign:"center", wordBreak:"break-word"}}>{folder.name}</div>
-                  <div style={{fontSize:12, color:"#6b7280"}}>{(folderFilesCount[folder.id] || 0)} файлов</div>
+                  <div style={{fontSize:12, color:"#6b7280"}}></div>
                 </div>
               ))}
 
@@ -568,19 +734,19 @@ export default function FileManager() {
                 const base = idx > 0 ? file.original_name.slice(0, idx) : file.original_name;
                 const ext = idx > 0 ? file.original_name.slice(idx) : "";
                 return (
-                  <div 
-                    key={file.id} 
+                  <div
+                    key={file.id}
                     draggable={!ownerMode}
                     onDragStart={handleDragStart(file, 'file')}
                     style={{
-                      width:140, 
-                      height:120, 
-                      padding:10, 
-                      borderRadius:10, 
-                      display:"flex", 
-                      flexDirection:"column", 
-                      alignItems:"center", 
-                      justifyContent:"center", 
+                      width:140,
+                      height:120,
+                      padding:10,
+                      borderRadius:10,
+                      display:"flex",
+                      flexDirection:"column",
+                      alignItems:"center",
+                      justifyContent:"center",
                       cursor:"pointer",
                       border: draggedItem?.id === file.id ? '2px solid #06b6d4' : '1px solid #e6eef3',
                       opacity: draggedItem?.id === file.id ? 0.6 : 1,
@@ -588,17 +754,15 @@ export default function FileManager() {
                       transition: 'all 0.2s'
                     }}
                   >
-                    <div 
-                      onClick={() => handleFileClick(file)} 
-                      onDoubleClick={() => handleFileOpen(file)} 
+                    <div
+                      onClick={() => handleFileClick(file)}
                       style={{textAlign:"center", width:"100%"}}
                     >
                       <div style={{fontSize:28}}>📄</div>
                       {!editingFileId || editingFileId !== file.id ? (
                         <>
-                          <div 
-                            style={{marginTop:8, fontWeight:600, textAlign:"center", wordBreak:"break-word"}} 
-                            onDoubleClick={() => { if (!ownerMode) setEditingFileId(file.id); }}
+                          <div
+                            style={{marginTop:8, fontWeight:600, textAlign:"center", wordBreak:"break-word"}}
                           >
                             {file.original_name}
                           </div>
@@ -615,13 +779,6 @@ export default function FileManager() {
                             setEditingFileId(null);
                           }}
                         />
-                      )}
-                    </div>
-
-                    <div style={{marginTop:6, display:"flex", gap:6}}>
-                      <button className="btn" onClick={() => setSelectedFile(file)}>Открыть</button>
-                      {!ownerMode && (
-                        <button className="btn" onClick={() => handleDeleteFile(file.id)}>Удалить</button>
                       )}
                     </div>
                   </div>
@@ -657,9 +814,8 @@ export default function FileManager() {
       {selectedFolder && (
         <div className="card p-4" style={{position:"fixed", right:20, bottom:20, width:"min(720px, 42vw)", maxWidth:"90vw"}}>
           <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-            <div style={{flex:1, paddingRight:8}}>
+              <div style={{flex:1, paddingRight:8}}>
               <div style={{fontWeight:700, wordBreak:"break-word"}}>{selectedFolder.name}</div>
-              <div style={{fontSize:12, color:"#6b7280"}}>{(folderChildrenCount[selectedFolder.id]||0)} папок, {(folderFilesCount[selectedFolder.id]||0)} файлов</div>
             </div>
             <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
               <button className="btn" onClick={()=> handleDownloadFolder(selectedFolder.id)}>Скачать ZIP</button>
@@ -713,3 +869,5 @@ function InlineRename({ file, currentBase, ext, onCancel, onSave }) {
     </div>
   );
 }
+
+

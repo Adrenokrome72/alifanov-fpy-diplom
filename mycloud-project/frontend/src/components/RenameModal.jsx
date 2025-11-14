@@ -1,8 +1,6 @@
-// frontend/src/components/RenameModal.jsx
 import React, { useState, useEffect } from "react";
 
 export default function RenameModal({ target, onClose, onConfirm, file }) {
-  // file: object when renaming file (contains original_name)
   const [base, setBase] = useState("");
   const [ext, setExt] = useState("");
 
@@ -16,15 +14,11 @@ export default function RenameModal({ target, onClose, onConfirm, file }) {
         setBase(file.original_name);
         setExt("");
       }
-    } else {
-      // folder rename will pass via target id; need to get name? target isn't enough here
-      // parent component should pass file param for files; for folder rename the modal will call confirm with provided name
-    }
+    } else {}
   }, [file]);
 
   const submit = () => {
     const newName = ext ? base + ext : base;
-    // If file: ensure user hasn't changed extension (we keep ext part)
     onConfirm(newName);
   };
 
