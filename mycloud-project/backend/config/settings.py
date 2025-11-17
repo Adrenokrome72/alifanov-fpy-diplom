@@ -99,8 +99,8 @@ MEDIA_ROOT = os.path.abspath(os.getenv("MEDIA_ROOT", os.path.join(BASE_DIR, "med
 WEBPACK_STATIC_DIR = BASE_DIR / "backend" / "static" / "frontend"
 
 STATICFILES_DIRS = [
-    WEBPACK_STATIC_DIR,
-    BASE_DIR / "static" / "frontend",
+    # WEBPACK_STATIC_DIR,
+    # BASE_DIR / "static" / "frontend",
 ]
 
 # CORS (dev-friendly)
@@ -136,7 +136,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.BasicAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+        "rest_framework.permissions.AllowAny",
     ],
 }
 

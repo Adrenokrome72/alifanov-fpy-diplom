@@ -11,10 +11,6 @@ __pycache__/
 venv/
 env/
 .venv/
-.env/
-.envrc
-*.env
-*.env.*
 
 # Django stuff
 *.log
@@ -49,11 +45,6 @@ frontend/.turbo/
 frontend/.yarn/
 frontend/.pnp.*
 
-# npm / yarn lock if not used universally
-package-lock.json
-yarn-error.log
-pnpm-lock.yaml
-
 # ==========================
 # === Tests / Reports ===
 # ==========================
@@ -84,7 +75,6 @@ Thumbs.db
 # ==========================
 # === Docker / CI Artifacts ===
 # ==========================
-docker-compose.override.yml
 *.pid
 *.seed
 *.lock
@@ -103,7 +93,6 @@ __pycache__/
 desktop.ini
 *.bat
 *.ps1
-*.sh
 *.cmd
 *.bak
 *.old
@@ -120,3 +109,4 @@ desktop.ini
 /backend/.env.local
 /backend/.pytest_cache/
 /backend/static/
+.env

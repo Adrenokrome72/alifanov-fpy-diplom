@@ -74,6 +74,17 @@ export default function AdminPanel() {
   const deleteUser = async (user) => {
     const uid = getUid(user);
     if (!uid) return toast("Не удалось определить пользователя", { type: "error" });
+
+    // Check if this is the last admin user
+    const isAdmin = !!user.is_admin || !!user.isAdmin || !!user.admin || !!user.is_staff;
+    if (isAdmin) {
+      const adminCount = users.filter(u => !!u.is_admin || !!u.isAdmin || !!u.admin || !!u.is_staff).length;
+      if (adminCount <= 1) {
+        toast("Невозможно удалить единственного администратора системы", { type: "error" });
+        return;
+      }
+    }
+
     if (!window.confirm(`Удалить пользователя ${user.username || uid}? Это действие необратимо.`)) return;
     try {
       const purge = window.confirm("Удалить полностью с очисткой данных (purge)? OK - да, Cancel - только аккаунт.");
@@ -153,7 +164,7 @@ export default function AdminPanel() {
 
               <div style={{ marginTop: 14 }}>
                 {selectedUser && (
-                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
                   <button
                     className="btn btn-primary"
                     onClick={() => selectedUser && viewStorage(selectedUser)}
@@ -186,7 +197,7 @@ export default function AdminPanel() {
                     className="btn btn-ghost"
                     onClick={() => selectedUser && toggleAdmin(selectedUser, false)}
                   >
-                    Убрать права администратора
+                    Убрать администратора
                   </button>
 
                   <button
@@ -267,14 +278,14 @@ export default function AdminPanel() {
                       };
                     }}
                   >
-                    Изменить лимит места
+                    Изменить лимит
                   </button>
 
                   <button
                     className="btn btn-danger"
                     onClick={() => selectedUser && deleteUser(selectedUser)}
                   >
-                    Удалить пользователя
+                    Удалить
                   </button>
                 </div>
                 )}

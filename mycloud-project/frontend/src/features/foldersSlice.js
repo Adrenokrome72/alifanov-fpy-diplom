@@ -139,10 +139,18 @@ const slice = createSlice({
       .addCase(fetchFolderTree.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error; })
 
       .addCase(createFolder.pending, (s) => { s.creating = true; })
-      .addCase(createFolder.fulfilled, (s, a) => { s.creating = false; s.list = [a.payload, ...s.list]; showToast('Папка создана', { type: 'success' }); })
+      .addCase(createFolder.fulfilled, (s, a) => {
+        s.creating = false;
+        s.list = [a.payload, ...s.list];
+        s.tree = [a.payload, ...s.tree];
+        showToast('Папка создана', { type: 'success' });
+      })
       .addCase(createFolder.rejected, (s, a) => { s.creating = false; showToast('Ошибка создания папки', { type: 'error' }); })
 
-      .addCase(renameFolder.fulfilled, (s, a) => { showToast('Переименовано', { type: 'success' }); })
+      .addCase(renameFolder.fulfilled, (s, a) => {
+        s.tree = s.tree.map(f => f.id === a.payload.id ? { ...f, name: a.payload.name } : f);
+        showToast('Переименовано', { type: 'success' });
+      })
       .addCase(moveFolder.fulfilled, (s, a) => { showToast('Папка перемещена', { type: 'success' }); })
       .addCase(deleteFolder.fulfilled, (s, a) => {
         s.list = s.list.filter(f => f.id !== a.payload.id);

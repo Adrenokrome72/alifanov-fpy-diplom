@@ -673,11 +673,22 @@ def folder_tree_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([permissions.IsAuthenticated])
-def welcome_view(request):
+@permission_classes([permissions.AllowAny])
+def health_view(request):
+    """
+    Health check endpoint for Docker Compose healthcheck.
+    Returns a simple JSON response indicating the service is healthy.
+    """
+    return Response({"status": "healthy"})
 
-    logger = logging.getLogger(__name__)
-    logger.info(f"Request received: {request.method} {request.path}")
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def welcome_view(request):
+    """
+    Welcome endpoint.
+    Returns a welcome message.
+    """
     return Response({"message": "Welcome to the Django API Service!"})
 
 

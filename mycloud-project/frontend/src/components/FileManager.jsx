@@ -143,6 +143,22 @@ export default function FileManager() {
     setFolderChildrenCount(children);
   }, [localFiles, localFolders]);
 
+  // Синхронизация selectedFile и selectedFolder с обновленными данными
+  useEffect(() => {
+    if (selectedFile) {
+      const updatedFile = localFiles.find(f => f.id === selectedFile.id);
+      if (updatedFile) {
+        setSelectedFile(updatedFile);
+      }
+    }
+    if (selectedFolder) {
+      const updatedFolder = localFolders.find(f => f.id === selectedFolder.id);
+      if (updatedFolder) {
+        setSelectedFolder(updatedFolder);
+      }
+    }
+  }, [localFiles, localFolders, selectedFile?.id, selectedFolder?.id]);
+
   useEffect(() => {
     const onChange = async () => {
       if (ownerMode) {

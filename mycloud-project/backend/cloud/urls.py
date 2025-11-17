@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import FolderViewSet, UserFileViewSet, external_download, RegisterView, LoginView, LogoutView, AdminUserViewSet
-from .views import csrf_token_view, current_user_view, folder_tree_view, welcome_view
+from .views import csrf_token_view, current_user_view, folder_tree_view, welcome_view, health_view
 
 router = DefaultRouter()
 router.register(r"folders", FolderViewSet, basename="folders")
@@ -11,6 +11,7 @@ router.register(r"admin-users", AdminUserViewSet, basename="admin-users")
 urlpatterns = [
     path("folders/tree/", folder_tree_view, name="folder-tree"),
     path("welcome/", welcome_view, name="welcome"),
+    path("health/", health_view, name="health"),
     path("external/download/<str:token>/", external_download, name="external-download"),
     path("auth/register/", RegisterView.as_view(), name="auth-register"),
     path("auth/login/", LoginView.as_view(), name="auth-login"),

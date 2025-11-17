@@ -9,7 +9,7 @@ COPY ../frontend/package*.json ./
 RUN npm ci --only=production
 
 # Copy source code
-COPY ../frontend/ .
+COPY ../frontend/ ./
 
 # Build the application
 RUN npm run build
@@ -23,12 +23,15 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Copy nginx configuration
 COPY ../infra/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Expose port
-EXPOSE 3000
+# Create directories for static and media files
+RUN mkdir -p /usr/share/nginx/static /usr/share/nginx/media
+
+# Expose ports
+EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/ || exit 1
+    CMD curl -f http://localhost/ || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
