@@ -107,7 +107,7 @@ STATICFILES_DIRS = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-]
+] + [f"http://{host.strip()}" for host in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if host.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
 # Разрешаем дополнительные заголовки (чтобы X-CSRFToken не блокировался)
@@ -121,7 +121,7 @@ except Exception:
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-]
+] + [f"http://{host.strip()}" for host in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if host.strip()]
 
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SAMESITE = "Lax"
