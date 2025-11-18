@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:18
@@ -34,9 +32,9 @@ services:
       - ../.env
     environment:
       - DJANGO_DEBUG=False
-      - DJANGO_ALLOWED_HOSTS=nginx,backend,localhost,127.0.0.1
-      - CORS_ALLOWED_ORIGINS=http://localhost,http://127.0.0.1,http://frontend
-      - CSRF_TRUSTED_ORIGINS=http://localhost,http://127.0.0.1,http://frontend
+      - DJANGO_ALLOWED_HOSTS=nginx,backend,localhost,127.0.0.1,89.111.172.68
+      - CORS_ALLOWED_ORIGINS=http://localhost,http://127.0.0.1,http://frontend,http://89.111.172.68
+      - CSRF_TRUSTED_ORIGINS=http://localhost,http://127.0.0.1,http://frontend,http://89.111.172.68
     ports:
       - "8000:8000"
     depends_on:

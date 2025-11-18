@@ -30,9 +30,9 @@ COPY ../backend/ .
 
 # --- Непривилегированный пользователь ---
 RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-
-USER app
+    && chown -R www-data:www-data /app \
+    && mkdir -p /app/backend/media \
+    && chown -R www-data:www-data /app/backend/media
 
 EXPOSE 8000
 
